@@ -1,0 +1,3 @@
+-- Remove 'incomplete' value from digital_permit_test_status enum
+-- Note: PostgreSQL doesn't support removing enum values, so this is a no-op
+-- In a real scenario, you'd need to recreate the type or use a different approach

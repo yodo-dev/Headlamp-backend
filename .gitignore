@@ -1,0 +1,10 @@
+endpoints.md
+app.env
+firebase-credentials.json
+HeadLamp_API_Collection.postman_collection.json
+docs/
+*.json
+
+# Environment files with secrets
+.env.development
+.env.production

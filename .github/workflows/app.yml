@@ -1,0 +1,22 @@
+# name: DigitalOcean App Platform
+
+# on:
+#   push:
+#     branches:
+#       - main
+
+# jobs:
+#   deploy:
+#     runs-on: ubuntu-latest
+#     steps:
+#       - name: Checkout code
+#         uses: actions/checkout@v2
+
+#       - name: Install doctl
+#         uses: digitalocean/action-doctl@v2
+#         with:
+#           token: ${{ secrets.DIGITALOCEAN_ACCESS_TOKEN }}
+
+#       - name: Deploy to DigitalOcean
+#         run: doctl apps create --spec .do/app.yaml --project-id d1f54cdc-b100-418d-8836-c6587b250362 --upsert --wait
+

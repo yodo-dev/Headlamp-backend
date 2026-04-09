@@ -1,0 +1,208 @@
+package api
+
+import (
+	"context"
+	"net/http"
+	"time"
+
+	db "github.com/The-You-School-HeadLamp/headlamp_backend/db/sqlc"
+	"github.com/The-You-School-HeadLamp/headlamp_backend/gpt"
+	"github.com/The-You-School-HeadLamp/headlamp_backend/service"
+	"github.com/The-You-School-HeadLamp/headlamp_backend/token"
+	"github.com/The-You-School-HeadLamp/headlamp_backend/util"
+	"github.com/gin-gonic/gin"
+	"github.com/rs/zerolog/log"
+)
+
+// Server serves HTTP requests for our service.
+type Server struct {
+	config            util.Config
+	store             db.Store
+	tokenMaker        token.Maker
+	router            *gin.Engine
+	httpServer        *http.Server
+	oauthSessionStore *OAuthSessionStore
+	uploader          *util.Uploader
+	gptClient         gpt.GptClient
+
+	// Services
+	reflectionService   *service.ReflectionService
+	reflectionScheduler *service.ReflectionScheduler
+	insightsService     *service.InsightsService
+	sessionHub          *SessionHub
+}
+
+// NewServer creates a new HTTP server and sets up routing.
+func NewServer(config util.Config, store db.Store, tokenMaker token.Maker, gptClient gpt.GptClient) (*Server, error) {
+	uploader := util.NewUploader(config.ExternalContentBaseURL, config.ExternalContentToken)
+
+	reflectionSvc := service.NewReflectionService(store, gptClient)
+	insightsSvc := service.NewInsightsService(store, gptClient)
+
+	server := &Server{
+		config:              config,
+		store:               store,
+		tokenMaker:          tokenMaker,
+		uploader:            uploader,
+		oauthSessionStore:   NewOAuthSessionStore(3 * time.Minute),
+		gptClient:           gptClient,
+		reflectionService:   reflectionSvc,
+		reflectionScheduler: service.NewReflectionScheduler(store, reflectionSvc, config.ReflectionTestMode),
+		insightsService:     insightsSvc,
+		sessionHub:          NewSessionHub(),
+	}
+
+	SetupValidator()
+
+	server.setupRouter()
+	server.setupFrontendRoutes()
+
+	// Start the background worker for session expiry
+	server.startSessionExpiryWorker()
+
+	// Start the daily reflection scheduler
+	if err := server.reflectionScheduler.Start(config.ReflectionCronSchedule); err != nil {
+		return nil, err
+	}
+
+	return server, nil
+}
+
+func (server *Server) setupRouter() {
+	router := gin.Default()
+
+	// Auth routes
+	v1 := router.Group("/v1")
+	v1.POST("/auth/parent", server.signUpParent)
+	v1.POST("/auth/parent/login", server.loginParent)
+	v1.POST("/auth/parent/oauth/:provider/initiate", server.initiateOAuth)
+	v1.GET("/auth/parent/oauth/poll/:session_id", server.pollOAuth)
+	v1.GET("/auth/parent/oauth/:provider/start", server.oauthParentStart)
+	v1.GET("/auth/parent/oauth/:provider/callback", server.oauthParentCallback)
+	v1.POST("/auth/parent/oauth/:provider/process", server.processOAuthIdToken)
+
+	// Public routes
+	v1.POST("/child/link-code/verify", server.verifyLinkCode)
+
+	// Notification routes - require any authenticated user
+	notificationRoutes := router.Group("/v1/notifications")
+	notificationRoutes.Use(server.simpleAuthMiddleware("parent", "child"))
+	{
+		notificationRoutes.POST("/device/register", server.registerDevice)
+		notificationRoutes.GET("", server.getNotifications)
+		notificationRoutes.POST("/:id/read", server.markNotificationAsRead)
+	}
+
+	// Child routes - require device authentication
+	childRoutes := router.Group("/v1/child")
+	childRoutes.Use(server.deviceAuthMiddleware())
+	{
+		childRoutes.GET("/", server.getChild)
+		childRoutes.POST("/logout", server.logoutChild)
+		childRoutes.GET("/boosters", server.getThisWeeksBooster)
+		childRoutes.POST("/booster/:booster_id/reflection", server.addReflectionVideo)
+		childRoutes.GET("/booster/:booster_id/quiz", server.getBoosterQuiz)
+		childRoutes.POST("/booster/:booster_id/quiz/submit", server.submitBoosterQuiz)
+		childRoutes.GET("/:id/social-media", server.getSocialMediaForChild)
+		childRoutes.PATCH("/", server.updateChildProfile)
+		childRoutes.POST("/:id/quiz/:quiz_id/submit", server.submitQuizAnswers) // Note: This was misplaced before
+
+		// Reflections
+		childRoutes.GET("/reflections/pending", server.getPendingReflections)
+		childRoutes.POST("/reflections/:id/respond", server.respondToReflection)
+		childRoutes.POST("/reflections/:id/acknowledge", server.acknowledgeReflection)
+		childRoutes.GET("/reflections/history", server.getReflectionHistory)
+		childRoutes.GET("/reflections/stats", server.getReflectionStats)
+		childRoutes.GET("/reflections/daily", server.getDailyReflection)
+	}
+
+	// Activity tracking routes
+	activityRoutes := router.Group("/v1/child/activity")
+	activityRoutes.Use(server.deviceAuthMiddleware())
+	{
+		activityRoutes.POST("/ping", server.ping)
+		activityRoutes.POST("/session/start", server.startSession)
+		activityRoutes.POST("/session/end", server.endSession)
+		activityRoutes.GET("/session/:id", server.getSessionStatus)
+		activityRoutes.GET("/ws", server.handleSessionWS)
+	}
+
+	// Parent-facing routes that require authentication
+	parentRoutes := router.Group("/v1/parent")
+	parentRoutes.Use(server.authMiddleware("parent"))
+	{
+		parentRoutes.GET("/child/:id/activity/summary", server.getActivitySummary)
+		parentRoutes.GET("/child/:id/activity/weekly-summary", server.getWeeklyActivitySummary)
+		parentRoutes.POST("/child", server.createChild)
+		parentRoutes.GET("/child/all", server.getAllChildren)
+		parentRoutes.GET("/child/:id", server.getParentChild)
+		parentRoutes.PATCH("/child/:id", server.updateChild)
+		parentRoutes.GET("/child/:id/link-code", server.generateLinkCode)
+		parentRoutes.GET("/child/:id/course/:course_id", server.getChildCourse)
+		parentRoutes.GET("/child/:id/course/:course_id/module/:module_id", server.getChildCourseModule)
+		parentRoutes.GET("/child/:id/course/:course_id/module/:module_id/quiz/:quiz_id", server.getQuizAttemptsForChild)
+		parentRoutes.POST("/child/:id/course/:course_id/module/:module_id/quiz/:quiz_id/submit", server.submitQuizAnswers)
+		parentRoutes.GET("/child/:id/course/latest", server.getLatestCourseForChild)
+		parentRoutes.GET("/child/:id/courses", server.getAllCoursesForChild)
+		parentRoutes.GET("/child/:id/courses/latest", server.getLatestCourseForChild)
+		parentRoutes.GET("/child/:id/courses/stats", server.getCoursesStatsForChild)
+		parentRoutes.GET("/courses", server.getAllCourses)
+		parentRoutes.PATCH("/", server.updateParentProfile)
+		parentRoutes.GET("/", server.getParentProfile)
+		parentRoutes.GET("/child/:id/social-media", server.getParentSocialMediaSettings)
+		parentRoutes.POST("/child/:id/social-media", server.setSocialMediaAccess)
+		parentRoutes.GET("/child/:id/boosters", server.getBoostersForChildByParent)
+		parentRoutes.GET("/child/:id/booster-reflections", server.getReflectionVideosForChild)
+		parentRoutes.GET("/child/:id/digital-permit-test/ws", server.handleDigitalPermitTestWS)
+		parentRoutes.GET("/child/:id/digital-permit-test/v2/ws", server.handleDigitalPermitTestWSV2)
+
+		// Parent: view and trigger reflections for their child
+		parentRoutes.GET("/child/:id/reflections", server.getChildReflectionsForParent)
+		parentRoutes.POST("/child/:id/reflections/trigger", server.triggerReflectionForChild)
+
+		// AI Insights routes
+		parentRoutes.GET("/child/:id/insights/dashboard", server.getDashboardInsights)
+		parentRoutes.GET("/child/:id/insights/engagement", server.getEngagementOverview)
+		parentRoutes.GET("/child/:id/insights/content-monitoring", server.getContentMonitoringSummary)
+		parentRoutes.POST("/child/:id/insights/content-monitoring/event", server.postContentMonitoringEvent)
+	}
+
+	server.router = router
+}
+
+// setupFrontendRoutes sets up the routes for the simple HTML test client.
+func (server *Server) setupFrontendRoutes() {
+	log.Info().Msg("setting up frontend test routes for development")
+	frontend := server.router.Group("/frontend")
+	frontend.GET("/test", func(ctx *gin.Context) {
+		ctx.File("./frontend/test.html")
+	})
+	frontend.GET("/callback", func(ctx *gin.Context) {
+		ctx.File("./frontend/callback.html")
+	})
+}
+
+// Start runs the HTTP server on a specific address.
+func (server *Server) Start(address string) error {
+	server.httpServer = &http.Server{
+		Addr:    address,
+		Handler: server.router,
+	}
+	return server.httpServer.ListenAndServe()
+}
+
+// Shutdown gracefully shuts down the server without interrupting any active connections.
+func (server *Server) Shutdown(ctx context.Context) error {
+	return server.httpServer.Shutdown(ctx)
+}
+
+// StopScheduler stops the reflection cron scheduler.
+func (server *Server) StopScheduler() {
+	if server.reflectionScheduler != nil {
+		server.reflectionScheduler.Stop()
+	}
+}
+
+func errorResponse(err error) gin.H {
+	return gin.H{"error": err.Error()}
+}
