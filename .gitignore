@@ -1,6 +1,7 @@
 endpoints.md
 app.env
 firebase-credentials.json
+docs/
 HeadLamp_API_Collection.postman_collection.json
 *.json
 api-docs/
