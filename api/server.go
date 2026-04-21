@@ -2,6 +2,7 @@ package api
 
 import (
 	"context"
+	"encoding/base64"
 	"fmt"
 	"net/http"
 	"time"
@@ -249,22 +250,30 @@ func errorResponse(err error) gin.H {
 }
 
 // initFirebaseApp initialises both a Firebase Auth client and a Firebase Messaging client.
-// It prefers FIREBASE_SERVICE_ACCOUNT_JSON_FILE (a path to the JSON file on disk) over
-// FIREBASE_SERVICE_ACCOUNT_JSON (inline JSON string). Returns (nil, nil, nil) when neither
-// is set so that local development environments still start up without Firebase.
+// It prefers FIREBASE_SERVICE_ACCOUNT_JSON_FILE (a path to the JSON file on disk), then
+// FIREBASE_SERVICE_ACCOUNT_JSON_BASE64 (base64-encoded JSON, safe for env vars), then
+// FIREBASE_SERVICE_ACCOUNT_JSON (raw inline JSON, dev only). Returns (nil, nil, nil) when
+// none is set so that local development environments still start up without Firebase.
 func initFirebaseApp(ctx context.Context, config util.Config) (*firebaseAuth.Client, *firebaseMessaging.Client, error) {
 	var opt option.ClientOption
 
 	switch {
 	case config.FirebaseServiceAccountJSONFile != "":
-		// Preferred for production: load from a file to avoid shell/systemd escape issues.
+		// Option 1: load from file (no escaping issues).
 		log.Info().Str("path", config.FirebaseServiceAccountJSONFile).Msg("loading Firebase credentials from file")
 		opt = option.WithCredentialsFile(config.FirebaseServiceAccountJSONFile)
+	case config.FirebaseServiceAccountJSONBase64 != "":
+		// Option 2: base64-encoded JSON — safe to store in systemd env files.
+		decoded, err := base64.StdEncoding.DecodeString(config.FirebaseServiceAccountJSONBase64)
+		if err != nil {
+			return nil, nil, fmt.Errorf("firebase: failed to base64-decode credentials: %w", err)
+		}
+		opt = option.WithCredentialsJSON(decoded)
 	case config.FirebaseServiceAccountJSON != "":
-		// Fallback: inline JSON string (used in development via app.development.env).
+		// Option 3: raw inline JSON (dev only — newlines are corrupted by systemd).
 		opt = option.WithCredentialsJSON([]byte(config.FirebaseServiceAccountJSON))
 	default:
-		log.Warn().Msg("neither FIREBASE_SERVICE_ACCOUNT_JSON_FILE nor FIREBASE_SERVICE_ACCOUNT_JSON set – Firebase disabled")
+		log.Warn().Msg("no Firebase credentials configured – Firebase disabled")
 		return nil, nil, nil
 	}
 	app, err := firebaseAdmin.NewApp(ctx, &firebaseAdmin.Config{
