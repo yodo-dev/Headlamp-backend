@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 	"net/http"
-	"strings"
 	"time"
 
 	firebaseAdmin "firebase.google.com/go/v4"
@@ -258,10 +257,7 @@ func initFirebaseApp(ctx context.Context, config util.Config) (*firebaseAuth.Cli
 		return nil, nil, nil
 	}
 
-	// Unescape literal \n sequences that env files store as two characters (backslash + n)
-	// into actual newline characters, which the PEM parser requires.
-	serviceAccountJSON := strings.ReplaceAll(config.FirebaseServiceAccountJSON, `\n`, "\n")
-	opt := option.WithCredentialsJSON([]byte(serviceAccountJSON))
+	opt := option.WithCredentialsJSON([]byte(config.FirebaseServiceAccountJSON))
 	app, err := firebaseAdmin.NewApp(ctx, &firebaseAdmin.Config{
 		ProjectID: config.FirebaseProjectID,
 	}, opt)

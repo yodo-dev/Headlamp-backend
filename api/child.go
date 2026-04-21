@@ -18,6 +18,9 @@ import (
 type verifyCodeRequest struct {
 	Code     string `json:"code" binding:"required"`
 	DeviceID string `json:"device_id" binding:"required"`
+	// Optional — registers the device for push notifications in the same request
+	PushToken string `json:"push_token"`
+	Provider  string `json:"provider"`
 }
 
 type verifyCodeResponse struct {
@@ -84,9 +87,11 @@ func (server *Server) verifyLinkCodeTx(ctx context.Context, req verifyCodeReques
 			// Device does not exist, create it.
 			log.Info().Str("device_id", req.DeviceID).Str("child_id", linkCode.ChildID).Msg("creating new device")
 			_, err = q.CreateDevice(ctx, db.CreateDeviceParams{
-				UserID:   childUUID,
-				UserType: "child",
-				DeviceID: req.DeviceID,
+				UserID:    childUUID,
+				UserType:  "child",
+				DeviceID:  req.DeviceID,
+				PushToken: pgtype.Text{String: req.PushToken, Valid: req.PushToken != ""},
+				Provider:  pgtype.Text{String: req.Provider, Valid: req.Provider != ""},
 			})
 			if err != nil {
 				log.Error().Err(err).Msg("failed to create new device")
@@ -99,6 +104,19 @@ func (server *Server) verifyLinkCodeTx(ctx context.Context, req verifyCodeReques
 				return errors.New("this device is already linked to another account")
 			}
 			log.Info().Str("device_id", req.DeviceID).Str("child_id", linkCode.ChildID).Msg("re-linking existing device.")
+			// Update push token if provided
+			if req.PushToken != "" && req.Provider != "" {
+				_, err = q.UpdateDevicePushToken(ctx, db.UpdateDevicePushTokenParams{
+					UserID:    childUUID,
+					DeviceID:  req.DeviceID,
+					PushToken: pgtype.Text{String: req.PushToken, Valid: true},
+					Provider:  pgtype.Text{String: req.Provider, Valid: true},
+				})
+				if err != nil {
+					log.Error().Err(err).Str("device_id", req.DeviceID).Msg("failed to update push token on re-link")
+					return err
+				}
+			}
 		}
 
 		// 6. Activate the device (either new or existing).

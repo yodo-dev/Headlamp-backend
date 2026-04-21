@@ -9,6 +9,8 @@ import (
 	db "github.com/The-You-School-HeadLamp/headlamp_backend/db/sqlc"
 	"github.com/The-You-School-HeadLamp/headlamp_backend/util"
 	"github.com/gin-gonic/gin"
+	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/rs/zerolog/log"
 )
 
@@ -48,6 +50,10 @@ type signUpParentRequest struct {
 	Surname   string `json:"surname" binding:"required"`
 	Email     string `json:"email" binding:"required,email"`
 	Password  string `json:"password" binding:"required"`
+	// Optional — registers the device for push notifications in the same request
+	DeviceID  string `json:"device_id"`
+	PushToken string `json:"push_token"`
+	Provider  string `json:"provider"`
 }
 
 type signUpParentResponse struct {
@@ -103,6 +109,8 @@ func (server *Server) signUpParent(ctx *gin.Context) {
 		return
 	}
 
+	server.upsertDeviceIfProvided(ctx, user.Parent.ParentID, ParentUserProfile, req.DeviceID, req.PushToken, req.Provider)
+
 	ctx.JSON(http.StatusOK, signUpParentResponse{
 		AccessToken:          accessToken,
 		AccessTokenExpiresAt: accessPayload.ExpiredAt,
@@ -117,6 +125,10 @@ func (server *Server) signUpParent(ctx *gin.Context) {
 type loginParentRequest struct {
 	Email    string `json:"email" binding:"required,email"`
 	Password string `json:"password" binding:"required"`
+	// Optional — registers the device for push notifications in the same request
+	DeviceID  string `json:"device_id"`
+	PushToken string `json:"push_token"`
+	Provider  string `json:"provider"`
 }
 
 type loginParentResponse struct {
@@ -174,6 +186,8 @@ func (server *Server) loginParent(ctx *gin.Context) {
 		return
 	}
 
+	server.upsertDeviceIfProvided(ctx, parent.ParentID, ParentUserProfile, req.DeviceID, req.PushToken, req.Provider)
+
 	ctx.JSON(http.StatusOK, loginParentResponse{
 		AccessToken:          accessToken,
 		AccessTokenExpiresAt: accessPayload.ExpiredAt,
@@ -183,4 +197,47 @@ func (server *Server) loginParent(ctx *gin.Context) {
 			CreatedAt: family.CreatedAt,
 		},
 	})
+}
+
+// upsertDeviceIfProvided registers or updates a device's push token.
+// It is a best-effort operation: errors are logged but do not affect the auth response.
+func (server *Server) upsertDeviceIfProvided(ctx *gin.Context, userIDStr, userType, deviceID, pushToken, provider string) {
+	if deviceID == "" || pushToken == "" || provider == "" {
+		return
+	}
+
+	userID, err := uuid.Parse(userIDStr)
+	if err != nil {
+		log.Error().Err(err).Str("user_id", userIDStr).Msg("upsertDevice: invalid user id")
+		return
+	}
+
+	_, err = server.store.GetDeviceByDeviceID(ctx, deviceID)
+	if err != nil && !errors.Is(err, sql.ErrNoRows) {
+		log.Error().Err(err).Str("device_id", deviceID).Msg("upsertDevice: failed to look up device")
+		return
+	}
+
+	if errors.Is(err, sql.ErrNoRows) {
+		_, err = server.store.CreateDevice(ctx, db.CreateDeviceParams{
+			UserID:    userID,
+			UserType:  userType,
+			DeviceID:  deviceID,
+			PushToken: pgtype.Text{String: pushToken, Valid: true},
+			Provider:  pgtype.Text{String: provider, Valid: true},
+		})
+		if err != nil {
+			log.Error().Err(err).Str("device_id", deviceID).Msg("upsertDevice: failed to create device")
+		}
+	} else {
+		_, err = server.store.UpdateDevicePushToken(ctx, db.UpdateDevicePushTokenParams{
+			UserID:    userID,
+			DeviceID:  deviceID,
+			PushToken: pgtype.Text{String: pushToken, Valid: true},
+			Provider:  pgtype.Text{String: provider, Valid: true},
+		})
+		if err != nil {
+			log.Error().Err(err).Str("device_id", deviceID).Msg("upsertDevice: failed to update device push token")
+		}
+	}
 }
