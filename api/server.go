@@ -127,6 +127,10 @@ func (server *Server) setupRouter() {
 		childRoutes.GET("/reflections/history", server.getReflectionHistory)
 		childRoutes.GET("/reflections/stats", server.getReflectionStats)
 		childRoutes.GET("/reflections/daily", server.getDailyReflection)
+
+		// Course progress routes for child
+		childRoutes.GET("/courses", server.getMyCoursesForChild)
+		childRoutes.GET("/courses/stats", server.getMyCoursesStatsForChild)
 	}
 
 	// Activity tracking routes
