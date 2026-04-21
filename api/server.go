@@ -31,10 +31,12 @@ type Server struct {
 	firebaseAuth      *firebaseAuth.Client
 
 	// Services
-	reflectionService   *service.ReflectionService
-	reflectionScheduler *service.ReflectionScheduler
-	insightsService     *service.InsightsService
-	sessionHub          *SessionHub
+	reflectionService      *service.ReflectionService
+	reflectionScheduler    *service.ReflectionScheduler
+	insightsService        *service.InsightsService
+	parentInsightService   *service.ParentInsightService
+	parentInsightScheduler *service.ParentInsightScheduler
+	sessionHub             *SessionHub
 }
 
 // NewServer creates a new HTTP server and sets up routing.
@@ -43,6 +45,7 @@ func NewServer(config util.Config, store db.Store, tokenMaker token.Maker, gptCl
 
 	reflectionSvc := service.NewReflectionService(store, gptClient)
 	insightsSvc := service.NewInsightsService(store, gptClient)
+	parentInsightSvc := service.NewParentInsightService(store, gptClient)
 
 	// Initialize Firebase Admin SDK
 	fbAuthClient, err := initFirebaseAuthClient(context.Background(), config)
@@ -51,17 +54,19 @@ func NewServer(config util.Config, store db.Store, tokenMaker token.Maker, gptCl
 	}
 
 	server := &Server{
-		config:              config,
-		store:               store,
-		tokenMaker:          tokenMaker,
-		uploader:            uploader,
-		oauthSessionStore:   NewOAuthSessionStore(3 * time.Minute),
-		gptClient:           gptClient,
-		firebaseAuth:        fbAuthClient,
-		reflectionService:   reflectionSvc,
-		reflectionScheduler: service.NewReflectionScheduler(store, reflectionSvc, config.ReflectionTestMode),
-		insightsService:     insightsSvc,
-		sessionHub:          NewSessionHub(),
+		config:                 config,
+		store:                  store,
+		tokenMaker:             tokenMaker,
+		uploader:               uploader,
+		oauthSessionStore:      NewOAuthSessionStore(3 * time.Minute),
+		gptClient:              gptClient,
+		firebaseAuth:           fbAuthClient,
+		reflectionService:      reflectionSvc,
+		reflectionScheduler:    service.NewReflectionScheduler(store, reflectionSvc, config.ReflectionTestMode),
+		insightsService:        insightsSvc,
+		parentInsightService:   parentInsightSvc,
+		parentInsightScheduler: service.NewParentInsightScheduler(store, parentInsightSvc),
+		sessionHub:             NewSessionHub(),
 	}
 
 	SetupValidator()
@@ -74,6 +79,11 @@ func NewServer(config util.Config, store db.Store, tokenMaker token.Maker, gptCl
 
 	// Start the daily reflection scheduler
 	if err := server.reflectionScheduler.Start(config.ReflectionCronSchedule); err != nil {
+		return nil, err
+	}
+
+	// Start the nightly parent insight scheduler
+	if err := server.parentInsightScheduler.Start(config.ParentInsightCronSchedule); err != nil {
 		return nil, err
 	}
 
@@ -182,6 +192,11 @@ func (server *Server) setupRouter() {
 		parentRoutes.GET("/child/:id/insights/engagement", server.getEngagementOverview)
 		parentRoutes.GET("/child/:id/insights/content-monitoring", server.getContentMonitoringSummary)
 		parentRoutes.POST("/child/:id/insights/content-monitoring/event", server.postContentMonitoringEvent)
+
+		// Parent daily insights
+		parentRoutes.GET("/child/:id/insights/daily", server.getParentDailyInsight)
+		parentRoutes.GET("/child/:id/insights/daily/history", server.getParentDailyInsightHistory)
+		parentRoutes.POST("/child/:id/insights/daily/:insight_id/read", server.markParentInsightRead)
 	}
 
 	server.router = router

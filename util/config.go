@@ -46,6 +46,9 @@ type Config struct {
 	// Reflection scheduler (standard 5-field cron expression)
 	ReflectionCronSchedule string `mapstructure:"REFLECTION_CRON_SCHEDULE"`
 	ReflectionTestMode     bool   `mapstructure:"REFLECTION_TEST_MODE"` // bypass idempotency for testing
+
+	// Parent insight scheduler (standard 5-field cron expression)
+	ParentInsightCronSchedule string `mapstructure:"PARENT_INSIGHT_CRON_SCHEDULE"`
 }
 
 // LoadConfig reads configuration from file or environment variables.
@@ -93,6 +96,9 @@ func LoadConfig(path string) (config Config, err error) {
 	viper.BindEnv("ONESIGNAL_API_KEY")
 	viper.BindEnv("FIREBASE_PROJECT_ID")
 	viper.BindEnv("FIREBASE_SERVICE_ACCOUNT_JSON")
+	viper.BindEnv("REFLECTION_CRON_SCHEDULE")
+	viper.BindEnv("REFLECTION_TEST_MODE")
+	viper.BindEnv("PARENT_INSIGHT_CRON_SCHEDULE")
 
 	err = viper.Unmarshal(&config)
 	fmt.Println(config)

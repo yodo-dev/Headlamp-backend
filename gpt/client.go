@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 
 	db "github.com/The-You-School-HeadLamp/headlamp_backend/db/sqlc"
 	"github.com/rs/zerolog/log"
@@ -22,6 +23,9 @@ type GptClient interface {
 	// GenerateInsights analyses aggregated child behavioral data and returns
 	// structured AI insight cards, trends, and maturity scores.
 	GenerateInsights(ctx InsightsContext) (*InsightsGPTResponse, error)
+	// GenerateParentInsight produces a daily GPT digest for a parent about
+	// their child's last 24 hours of activity.
+	GenerateParentInsight(ctx context.Context, insightCtx ParentInsightContext) (*ParentInsightResponse, error)
 }
 
 // client implements the GptClient interface.
@@ -211,4 +215,22 @@ func buildSingleUserMessage(content string) []openai.ChatCompletionMessage {
 	return []openai.ChatCompletionMessage{
 		{Role: openai.ChatMessageRoleUser, Content: content},
 	}
+}
+
+// GenerateParentInsight calls GPT to produce a daily parent digest for the given child context.
+func (c *client) GenerateParentInsight(ctx context.Context, insightCtx ParentInsightContext) (*ParentInsightResponse, error) {
+	userPrompt := BuildParentInsightUserPrompt(insightCtx)
+	log.Info().Str("child_id", insightCtx.ChildID).Msg("generating parent daily insight")
+
+	jsonResponse, err := c.GetResponse(ParentInsightSystemPrompt, buildSingleUserMessage(userPrompt))
+	if err != nil {
+		return nil, err
+	}
+
+	var result ParentInsightResponse
+	if err := json.Unmarshal([]byte(jsonResponse), &result); err != nil {
+		return nil, fmt.Errorf("failed to parse parent insight response: %w", err)
+	}
+
+	return &result, nil
 }

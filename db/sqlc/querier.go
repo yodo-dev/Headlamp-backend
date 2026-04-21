@@ -168,6 +168,13 @@ type Querier interface {
 	UpdateSubscriptionStatus(ctx context.Context, arg UpdateSubscriptionStatusParams) (Subscription, error)
 	UpsertChildReflectionContext(ctx context.Context, arg UpsertChildReflectionContextParams) (ChildReflectionContext, error)
 	UseDeepLinkCode(ctx context.Context, code string) (DeepLinkCode, error)
+
+	// Parent daily insights
+	CreateParentDailyInsight(ctx context.Context, arg CreateParentDailyInsightParams) (ParentDailyInsight, error)
+	GetTodayParentInsightForChild(ctx context.Context, arg GetTodayParentInsightForChildParams) (ParentDailyInsight, error)
+	GetParentInsightHistory(ctx context.Context, arg GetParentInsightHistoryParams) ([]ParentDailyInsight, error)
+	MarkParentInsightRead(ctx context.Context, arg MarkParentInsightReadParams) (ParentDailyInsight, error)
+	GetAllChildrenForParentInsightScheduler(ctx context.Context) ([]GetAllChildrenForParentInsightSchedulerRow, error)
 }
 
 var _ Querier = (*Queries)(nil)
