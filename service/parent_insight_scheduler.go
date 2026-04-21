@@ -4,6 +4,7 @@ import (
 	"context"
 
 	db "github.com/The-You-School-HeadLamp/headlamp_backend/db/sqlc"
+	"github.com/google/uuid"
 	"github.com/robfig/cron/v3"
 	"github.com/rs/zerolog/log"
 )
@@ -11,17 +12,19 @@ import (
 // ParentInsightScheduler runs a nightly cron job to pre-generate parent daily
 // insight digests for all parent-child pairs that have not yet received one today.
 type ParentInsightScheduler struct {
-	store          db.Store
-	insightService *ParentInsightService
-	cron           *cron.Cron
+	store           db.Store
+	insightService  *ParentInsightService
+	notificationSvc *NotificationService
+	cron            *cron.Cron
 }
 
 // NewParentInsightScheduler creates the scheduler. Call Start to activate it.
-func NewParentInsightScheduler(store db.Store, insightService *ParentInsightService) *ParentInsightScheduler {
+func NewParentInsightScheduler(store db.Store, insightService *ParentInsightService, notificationSvc *NotificationService) *ParentInsightScheduler {
 	return &ParentInsightScheduler{
-		store:          store,
-		insightService: insightService,
-		cron:           cron.New(),
+		store:           store,
+		insightService:  insightService,
+		notificationSvc: notificationSvc,
+		cron:            cron.New(),
 	}
 }
 
@@ -65,7 +68,35 @@ func (s *ParentInsightScheduler) runParentInsights() {
 					Str("parent_id", parentID).
 					Str("child_id", childID).
 					Msg("parent insight scheduler: failed to generate insight")
+				return
 			}
+			s.notifyParent(context.Background(), parentID, childID)
 		}()
+	}
+}
+
+// notifyParent sends a push notification to a parent after their daily digest is ready.
+func (s *ParentInsightScheduler) notifyParent(ctx context.Context, parentID, childID string) {
+	if s.notificationSvc == nil {
+		return
+	}
+	recipientID, err := uuid.Parse(parentID)
+	if err != nil {
+		log.Warn().Str("parent_id", parentID).Msg("parent insight scheduler: invalid parent UUID for notification")
+		return
+	}
+	child, err := s.store.GetChild(ctx, childID)
+	if err != nil {
+		log.Warn().Err(err).Str("child_id", childID).Msg("parent insight scheduler: failed to get child for notification")
+		return
+	}
+	if err := s.notificationSvc.CreateAndSend(
+		ctx,
+		recipientID,
+		db.NotificationRecipientTypeParent,
+		"Your daily digest is ready",
+		"Your insights for "+child.FirstName+" are ready to view.",
+	); err != nil {
+		log.Warn().Err(err).Str("parent_id", parentID).Msg("parent insight scheduler: failed to send notification")
 	}
 }

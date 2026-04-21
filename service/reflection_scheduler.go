@@ -4,6 +4,7 @@ import (
 	"context"
 
 	db "github.com/The-You-School-HeadLamp/headlamp_backend/db/sqlc"
+	"github.com/google/uuid"
 	"github.com/robfig/cron/v3"
 	"github.com/rs/zerolog/log"
 )
@@ -13,16 +14,18 @@ import (
 type ReflectionScheduler struct {
 	store             db.Store
 	reflectionService *ReflectionService
+	notificationSvc   *NotificationService
 	cron              *cron.Cron
 	testMode          bool // when true, bypasses idempotency so every tick generates a new reflection
 }
 
 // NewReflectionScheduler creates a new scheduler. Call Start to begin scheduling.
 // Set testMode=true during development to get a new reflection on every cron tick.
-func NewReflectionScheduler(store db.Store, reflectionService *ReflectionService, testMode bool) *ReflectionScheduler {
+func NewReflectionScheduler(store db.Store, reflectionService *ReflectionService, notificationSvc *NotificationService, testMode bool) *ReflectionScheduler {
 	return &ReflectionScheduler{
 		store:             store,
 		reflectionService: reflectionService,
+		notificationSvc:   notificationSvc,
 		cron:              cron.New(),
 		testMode:          testMode,
 	}
@@ -65,7 +68,9 @@ func (s *ReflectionScheduler) runDailyReflections() {
 			go func() {
 				if _, err := s.reflectionService.GenerateDailyReflectionForced(ctx, childID); err != nil {
 					log.Error().Err(err).Str("child_id", childID).Msg("scheduler[test]: failed to generate reflection")
+					return
 				}
+				s.notifyChild(ctx, childID)
 			}()
 		}
 		return
@@ -84,7 +89,30 @@ func (s *ReflectionScheduler) runDailyReflections() {
 		go func() {
 			if _, err := s.reflectionService.GenerateDailyReflection(ctx, childID); err != nil {
 				log.Error().Err(err).Str("child_id", childID).Msg("scheduler: failed to generate daily reflection")
+				return
 			}
+			s.notifyChild(ctx, childID)
 		}()
+	}
+}
+
+// notifyChild sends a push notification to a child after their daily reflection is ready.
+func (s *ReflectionScheduler) notifyChild(ctx context.Context, childID string) {
+	if s.notificationSvc == nil {
+		return
+	}
+	recipientID, err := uuid.Parse(childID)
+	if err != nil {
+		log.Warn().Str("child_id", childID).Msg("scheduler: invalid child UUID for notification")
+		return
+	}
+	if err := s.notificationSvc.CreateAndSend(
+		ctx,
+		recipientID,
+		db.NotificationRecipientTypeChild,
+		"Your daily reflection is ready 🌟",
+		"Take a moment to reflect on your day.",
+	); err != nil {
+		log.Warn().Err(err).Str("child_id", childID).Msg("scheduler: failed to send reflection notification")
 	}
 }

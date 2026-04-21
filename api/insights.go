@@ -178,4 +178,9 @@ func (server *Server) postContentMonitoringEvent(ctx *gin.Context) {
 		return
 	}
 	ctx.JSON(http.StatusCreated, event)
+
+	// Notify parent when a high-severity event is detected.
+	if req.Severity == "high" {
+		go server.notifyParentOfHighRiskContent(childID)
+	}
 }

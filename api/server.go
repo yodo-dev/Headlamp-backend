@@ -8,6 +8,7 @@ import (
 
 	firebaseAdmin "firebase.google.com/go/v4"
 	firebaseAuth "firebase.google.com/go/v4/auth"
+	firebaseMessaging "firebase.google.com/go/v4/messaging"
 	db "github.com/The-You-School-HeadLamp/headlamp_backend/db/sqlc"
 	"github.com/The-You-School-HeadLamp/headlamp_backend/gpt"
 	"github.com/The-You-School-HeadLamp/headlamp_backend/service"
@@ -29,8 +30,10 @@ type Server struct {
 	uploader          *util.Uploader
 	gptClient         gpt.GptClient
 	firebaseAuth      *firebaseAuth.Client
+	firebaseMsg       *firebaseMessaging.Client
 
 	// Services
+	notificationService    *service.NotificationService
 	reflectionService      *service.ReflectionService
 	reflectionScheduler    *service.ReflectionScheduler
 	insightsService        *service.InsightsService
@@ -48,10 +51,12 @@ func NewServer(config util.Config, store db.Store, tokenMaker token.Maker, gptCl
 	parentInsightSvc := service.NewParentInsightService(store, gptClient)
 
 	// Initialize Firebase Admin SDK
-	fbAuthClient, err := initFirebaseAuthClient(context.Background(), config)
+	fbAuthClient, fbMsgClient, err := initFirebaseApp(context.Background(), config)
 	if err != nil {
-		return nil, fmt.Errorf("failed to initialize firebase auth client: %w", err)
+		return nil, fmt.Errorf("failed to initialize firebase: %w", err)
 	}
+
+	notificationSvc := service.NewNotificationService(store, fbMsgClient)
 
 	server := &Server{
 		config:                 config,
@@ -61,11 +66,13 @@ func NewServer(config util.Config, store db.Store, tokenMaker token.Maker, gptCl
 		oauthSessionStore:      NewOAuthSessionStore(3 * time.Minute),
 		gptClient:              gptClient,
 		firebaseAuth:           fbAuthClient,
+		firebaseMsg:            fbMsgClient,
+		notificationService:    notificationSvc,
 		reflectionService:      reflectionSvc,
-		reflectionScheduler:    service.NewReflectionScheduler(store, reflectionSvc, config.ReflectionTestMode),
+		reflectionScheduler:    service.NewReflectionScheduler(store, reflectionSvc, notificationSvc, config.ReflectionTestMode),
 		insightsService:        insightsSvc,
 		parentInsightService:   parentInsightSvc,
-		parentInsightScheduler: service.NewParentInsightScheduler(store, parentInsightSvc),
+		parentInsightScheduler: service.NewParentInsightScheduler(store, parentInsightSvc, notificationSvc),
 		sessionHub:             NewSessionHub(),
 	}
 
@@ -113,6 +120,8 @@ func (server *Server) setupRouter() {
 	{
 		notificationRoutes.POST("/device/register", server.registerDevice)
 		notificationRoutes.GET("", server.getNotifications)
+		notificationRoutes.GET("/summary", server.getNotificationSummary)
+		notificationRoutes.POST("/read-all", server.markAllNotificationsAsRead)
 		notificationRoutes.POST("/:id/read", server.markNotificationAsRead)
 	}
 
@@ -239,13 +248,13 @@ func errorResponse(err error) gin.H {
 	return gin.H{"error": err.Error()}
 }
 
-// initFirebaseAuthClient initialises a Firebase Auth client using the service account JSON
-// stored in config. Returns nil (no error) when the config value is empty so that local
-// development environments that do not set FIREBASE_SERVICE_ACCOUNT_JSON still start up.
-func initFirebaseAuthClient(ctx context.Context, config util.Config) (*firebaseAuth.Client, error) {
+// initFirebaseApp initialises both a Firebase Auth client and a Firebase Messaging client
+// using the service account JSON stored in config. Returns (nil, nil, nil) when the config
+// value is empty so that local development environments still start up without Firebase.
+func initFirebaseApp(ctx context.Context, config util.Config) (*firebaseAuth.Client, *firebaseMessaging.Client, error) {
 	if config.FirebaseServiceAccountJSON == "" {
-		log.Warn().Msg("FIREBASE_SERVICE_ACCOUNT_JSON not set – Firebase auth disabled")
-		return nil, nil
+		log.Warn().Msg("FIREBASE_SERVICE_ACCOUNT_JSON not set – Firebase auth and push notifications disabled")
+		return nil, nil, nil
 	}
 
 	opt := option.WithCredentialsJSON([]byte(config.FirebaseServiceAccountJSON))
@@ -253,14 +262,19 @@ func initFirebaseAuthClient(ctx context.Context, config util.Config) (*firebaseA
 		ProjectID: config.FirebaseProjectID,
 	}, opt)
 	if err != nil {
-		return nil, fmt.Errorf("firebase.NewApp: %w", err)
+		return nil, nil, fmt.Errorf("firebase.NewApp: %w", err)
 	}
 
-	client, err := app.Auth(ctx)
+	authClient, err := app.Auth(ctx)
 	if err != nil {
-		return nil, fmt.Errorf("firebase app.Auth: %w", err)
+		return nil, nil, fmt.Errorf("firebase app.Auth: %w", err)
 	}
 
-	log.Info().Str("project_id", config.FirebaseProjectID).Msg("Firebase Auth client initialised")
-	return client, nil
+	msgClient, err := app.Messaging(ctx)
+	if err != nil {
+		return nil, nil, fmt.Errorf("firebase app.Messaging: %w", err)
+	}
+
+	log.Info().Str("project_id", config.FirebaseProjectID).Msg("Firebase Auth and Messaging clients initialised")
+	return authClient, msgClient, nil
 }
