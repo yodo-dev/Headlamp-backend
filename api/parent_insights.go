@@ -1,15 +1,57 @@
 package api
 
 import (
+	"encoding/json"
 	"errors"
 	"net/http"
 	"strconv"
+	"time"
 
+	db "github.com/The-You-School-HeadLamp/headlamp_backend/db/sqlc"
+	"github.com/The-You-School-HeadLamp/headlamp_backend/gpt"
 	"github.com/The-You-School-HeadLamp/headlamp_backend/token"
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 )
+
+// parentInsightResponse is the API response shape — insight_content is decoded
+// JSON instead of the raw []byte stored in the DB.
+type parentInsightResponse struct {
+	ID          uuid.UUID                  `json:"id"`
+	ParentID    string                     `json:"parent_id"`
+	ChildID     string                     `json:"child_id"`
+	Date        string                     `json:"date"`
+	Insight     *gpt.ParentInsightResponse `json:"insight"`
+	OverallTone string                     `json:"overall_tone"`
+	IsRead      bool                       `json:"is_read"`
+	GeneratedAt time.Time                  `json:"generated_at"`
+	CreatedAt   time.Time                  `json:"created_at"`
+}
+
+func toParentInsightResponse(row db.ParentDailyInsight) parentInsightResponse {
+	var insight gpt.ParentInsightResponse
+	_ = json.Unmarshal(row.InsightContent, &insight)
+
+	dateStr := ""
+	if t, err := row.Date.Value(); err == nil && t != nil {
+		if d, ok := t.(time.Time); ok {
+			dateStr = d.Format("2006-01-02")
+		}
+	}
+
+	return parentInsightResponse{
+		ID:          row.ID,
+		ParentID:    row.ParentID,
+		ChildID:     row.ChildID,
+		Date:        dateStr,
+		Insight:     &insight,
+		OverallTone: row.OverallTone,
+		IsRead:      row.IsRead,
+		GeneratedAt: row.GeneratedAt,
+		CreatedAt:   row.CreatedAt,
+	}
+}
 
 // resolveParentInsightCtx verifies ownership and returns (parentID, childID).
 // On failure it writes the error response and returns ("", "", false).
@@ -47,7 +89,7 @@ func (server *Server) getParentDailyInsight(ctx *gin.Context) {
 		return
 	}
 
-	ctx.JSON(http.StatusOK, insight)
+	ctx.JSON(http.StatusOK, toParentInsightResponse(*insight))
 }
 
 // getParentDailyInsightHistory handles GET /v1/parent/child/:id/insights/daily/history
@@ -74,7 +116,11 @@ func (server *Server) getParentDailyInsightHistory(ctx *gin.Context) {
 		return
 	}
 
-	ctx.JSON(http.StatusOK, history)
+	resp := make([]parentInsightResponse, len(history))
+	for i, row := range history {
+		resp[i] = toParentInsightResponse(row)
+	}
+	ctx.JSON(http.StatusOK, resp)
 }
 
 // markParentInsightRead handles POST /v1/parent/child/:id/insights/daily/:insight_id/read
@@ -101,5 +147,5 @@ func (server *Server) markParentInsightRead(ctx *gin.Context) {
 		return
 	}
 
-	ctx.JSON(http.StatusOK, updated)
+	ctx.JSON(http.StatusOK, toParentInsightResponse(*updated))
 }
