@@ -39,6 +39,10 @@ type Config struct {
 	ExternalRequestTimeout time.Duration `mapstructure:"EXTERNAL_REQUEST_TIMEOUT"`
 	OpenAIAPIKey           string        `mapstructure:"OPENAI_API_KEY"`
 
+	// Firebase Admin SDK
+	FirebaseProjectID          string `mapstructure:"FIREBASE_PROJECT_ID"`
+	FirebaseServiceAccountJSON string `mapstructure:"FIREBASE_SERVICE_ACCOUNT_JSON"` // raw JSON string of the service account key
+
 	// Reflection scheduler (standard 5-field cron expression)
 	ReflectionCronSchedule string `mapstructure:"REFLECTION_CRON_SCHEDULE"`
 	ReflectionTestMode     bool   `mapstructure:"REFLECTION_TEST_MODE"` // bypass idempotency for testing
@@ -87,6 +91,8 @@ func LoadConfig(path string) (config Config, err error) {
 	viper.BindEnv("OPENAI_API_KEY")
 	viper.BindEnv("ONESIGNAL_APP_ID")
 	viper.BindEnv("ONESIGNAL_API_KEY")
+	viper.BindEnv("FIREBASE_PROJECT_ID")
+	viper.BindEnv("FIREBASE_SERVICE_ACCOUNT_JSON")
 
 	err = viper.Unmarshal(&config)
 	fmt.Println(config)

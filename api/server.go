@@ -2,9 +2,12 @@ package api
 
 import (
 	"context"
+	"fmt"
 	"net/http"
 	"time"
 
+	firebaseAdmin "firebase.google.com/go/v4"
+	firebaseAuth "firebase.google.com/go/v4/auth"
 	db "github.com/The-You-School-HeadLamp/headlamp_backend/db/sqlc"
 	"github.com/The-You-School-HeadLamp/headlamp_backend/gpt"
 	"github.com/The-You-School-HeadLamp/headlamp_backend/service"
@@ -12,6 +15,7 @@ import (
 	"github.com/The-You-School-HeadLamp/headlamp_backend/util"
 	"github.com/gin-gonic/gin"
 	"github.com/rs/zerolog/log"
+	"google.golang.org/api/option"
 )
 
 // Server serves HTTP requests for our service.
@@ -24,6 +28,7 @@ type Server struct {
 	oauthSessionStore *OAuthSessionStore
 	uploader          *util.Uploader
 	gptClient         gpt.GptClient
+	firebaseAuth      *firebaseAuth.Client
 
 	// Services
 	reflectionService   *service.ReflectionService
@@ -39,6 +44,12 @@ func NewServer(config util.Config, store db.Store, tokenMaker token.Maker, gptCl
 	reflectionSvc := service.NewReflectionService(store, gptClient)
 	insightsSvc := service.NewInsightsService(store, gptClient)
 
+	// Initialize Firebase Admin SDK
+	fbAuthClient, err := initFirebaseAuthClient(context.Background(), config)
+	if err != nil {
+		return nil, fmt.Errorf("failed to initialize firebase auth client: %w", err)
+	}
+
 	server := &Server{
 		config:              config,
 		store:               store,
@@ -46,6 +57,7 @@ func NewServer(config util.Config, store db.Store, tokenMaker token.Maker, gptCl
 		uploader:            uploader,
 		oauthSessionStore:   NewOAuthSessionStore(3 * time.Minute),
 		gptClient:           gptClient,
+		firebaseAuth:        fbAuthClient,
 		reflectionService:   reflectionSvc,
 		reflectionScheduler: service.NewReflectionScheduler(store, reflectionSvc, config.ReflectionTestMode),
 		insightsService:     insightsSvc,
@@ -80,6 +92,7 @@ func (server *Server) setupRouter() {
 	v1.GET("/auth/parent/oauth/:provider/start", server.oauthParentStart)
 	v1.GET("/auth/parent/oauth/:provider/callback", server.oauthParentCallback)
 	v1.POST("/auth/parent/oauth/:provider/process", server.processOAuthIdToken)
+	v1.POST("/auth/parent/firebase", server.processFirebaseIdToken)
 
 	// Public routes
 	v1.POST("/child/link-code/verify", server.verifyLinkCode)
@@ -205,4 +218,30 @@ func (server *Server) StopScheduler() {
 
 func errorResponse(err error) gin.H {
 	return gin.H{"error": err.Error()}
+}
+
+// initFirebaseAuthClient initialises a Firebase Auth client using the service account JSON
+// stored in config. Returns nil (no error) when the config value is empty so that local
+// development environments that do not set FIREBASE_SERVICE_ACCOUNT_JSON still start up.
+func initFirebaseAuthClient(ctx context.Context, config util.Config) (*firebaseAuth.Client, error) {
+	if config.FirebaseServiceAccountJSON == "" {
+		log.Warn().Msg("FIREBASE_SERVICE_ACCOUNT_JSON not set – Firebase auth disabled")
+		return nil, nil
+	}
+
+	opt := option.WithCredentialsJSON([]byte(config.FirebaseServiceAccountJSON))
+	app, err := firebaseAdmin.NewApp(ctx, &firebaseAdmin.Config{
+		ProjectID: config.FirebaseProjectID,
+	}, opt)
+	if err != nil {
+		return nil, fmt.Errorf("firebase.NewApp: %w", err)
+	}
+
+	client, err := app.Auth(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("firebase app.Auth: %w", err)
+	}
+
+	log.Info().Str("project_id", config.FirebaseProjectID).Msg("Firebase Auth client initialised")
+	return client, nil
 }
