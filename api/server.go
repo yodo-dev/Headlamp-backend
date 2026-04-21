@@ -248,16 +248,25 @@ func errorResponse(err error) gin.H {
 	return gin.H{"error": err.Error()}
 }
 
-// initFirebaseApp initialises both a Firebase Auth client and a Firebase Messaging client
-// using the service account JSON stored in config. Returns (nil, nil, nil) when the config
-// value is empty so that local development environments still start up without Firebase.
+// initFirebaseApp initialises both a Firebase Auth client and a Firebase Messaging client.
+// It prefers FIREBASE_SERVICE_ACCOUNT_JSON_FILE (a path to the JSON file on disk) over
+// FIREBASE_SERVICE_ACCOUNT_JSON (inline JSON string). Returns (nil, nil, nil) when neither
+// is set so that local development environments still start up without Firebase.
 func initFirebaseApp(ctx context.Context, config util.Config) (*firebaseAuth.Client, *firebaseMessaging.Client, error) {
-	if config.FirebaseServiceAccountJSON == "" {
-		log.Warn().Msg("FIREBASE_SERVICE_ACCOUNT_JSON not set – Firebase auth and push notifications disabled")
+	var opt option.ClientOption
+
+	switch {
+	case config.FirebaseServiceAccountJSONFile != "":
+		// Preferred for production: load from a file to avoid shell/systemd escape issues.
+		log.Info().Str("path", config.FirebaseServiceAccountJSONFile).Msg("loading Firebase credentials from file")
+		opt = option.WithCredentialsFile(config.FirebaseServiceAccountJSONFile)
+	case config.FirebaseServiceAccountJSON != "":
+		// Fallback: inline JSON string (used in development via app.development.env).
+		opt = option.WithCredentialsJSON([]byte(config.FirebaseServiceAccountJSON))
+	default:
+		log.Warn().Msg("neither FIREBASE_SERVICE_ACCOUNT_JSON_FILE nor FIREBASE_SERVICE_ACCOUNT_JSON set – Firebase disabled")
 		return nil, nil, nil
 	}
-
-	opt := option.WithCredentialsJSON([]byte(config.FirebaseServiceAccountJSON))
 	app, err := firebaseAdmin.NewApp(ctx, &firebaseAdmin.Config{
 		ProjectID: config.FirebaseProjectID,
 	}, opt)

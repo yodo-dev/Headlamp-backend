@@ -40,8 +40,9 @@ type Config struct {
 	OpenAIAPIKey           string        `mapstructure:"OPENAI_API_KEY"`
 
 	// Firebase Admin SDK
-	FirebaseProjectID          string `mapstructure:"FIREBASE_PROJECT_ID"`
-	FirebaseServiceAccountJSON string `mapstructure:"FIREBASE_SERVICE_ACCOUNT_JSON"` // raw JSON string of the service account key
+	FirebaseProjectID              string `mapstructure:"FIREBASE_PROJECT_ID"`
+	FirebaseServiceAccountJSON     string `mapstructure:"FIREBASE_SERVICE_ACCOUNT_JSON"`      // raw JSON string (dev/fallback)
+	FirebaseServiceAccountJSONFile string `mapstructure:"FIREBASE_SERVICE_ACCOUNT_JSON_FILE"` // path to service account JSON file (preferred for production)
 
 	// Reflection scheduler (standard 5-field cron expression)
 	ReflectionCronSchedule string `mapstructure:"REFLECTION_CRON_SCHEDULE"`
