@@ -26,6 +26,9 @@ type verifyCodeRequest struct {
 type verifyCodeResponse struct {
 	PublicKey   []byte `json:"public_key"`
 	AccessToken string `json:"access_token"`
+	// Internal fields — not exposed in the JSON response.
+	ChildID  string `json:"-"`
+	ParentID string `json:"-"`
 }
 
 // verifyLinkCodeTx manages the transaction for verifying a link code and associating a device.
@@ -170,6 +173,8 @@ func (server *Server) verifyLinkCodeTx(ctx context.Context, req verifyCodeReques
 
 		response.PublicKey = family.PublicKey
 		response.AccessToken = customToken
+		response.ChildID = linkCode.ChildID
+		response.ParentID = parent.ParentID
 		return nil
 	})
 
@@ -294,5 +299,64 @@ func (server *Server) verifyLinkCode(ctx *gin.Context) {
 	}
 
 	log.Info().Str("code", req.Code).Msg("link code verified and device linked successfully")
+
+	// Trigger first-time reflection and parent insight in the background.
+	// Both services are idempotent so the nightly cron won't duplicate them.
+	go server.triggerFirstTimeReflections(rsp.ChildID, rsp.ParentID)
+
 	ctx.JSON(http.StatusOK, rsp)
+}
+
+// triggerFirstTimeReflections generates an immediate reflection for a child and
+// an immediate parent insight on their very first device link. It runs in a
+// background goroutine so it never blocks the login response.
+// Both underlying service calls are idempotent — if the nightly cron fires later
+// the same day it will simply return the already-generated record.
+func (server *Server) triggerFirstTimeReflections(childID, parentID string) {
+	ctx := context.Background()
+
+	// 1. Child reflection
+	if _, err := server.reflectionService.GenerateDailyReflection(ctx, childID); err != nil {
+		log.Warn().Err(err).Str("child_id", childID).Msg("first-time: failed to generate child reflection")
+	} else {
+		log.Info().Str("child_id", childID).Msg("first-time: child reflection generated")
+		if server.notificationService != nil {
+			childUUID, err := uuid.Parse(childID)
+			if err == nil {
+				if err := server.notificationService.CreateAndSend(
+					ctx,
+					childUUID,
+					db.NotificationRecipientTypeChild,
+					"Your daily reflection is ready 🌟",
+					"Take a moment to reflect on your day.",
+				); err != nil {
+					log.Warn().Err(err).Str("child_id", childID).Msg("first-time: failed to notify child")
+				}
+			}
+		}
+	}
+
+	// 2. Parent insight for this child
+	if _, err := server.parentInsightService.GenerateDailyInsight(ctx, parentID, childID); err != nil {
+		log.Warn().Err(err).Str("parent_id", parentID).Str("child_id", childID).Msg("first-time: failed to generate parent insight")
+	} else {
+		log.Info().Str("parent_id", parentID).Str("child_id", childID).Msg("first-time: parent insight generated")
+		if server.notificationService != nil {
+			parentUUID, err := uuid.Parse(parentID)
+			if err == nil {
+				child, err := server.store.GetChild(ctx, childID)
+				if err == nil {
+					if err := server.notificationService.CreateAndSend(
+						ctx,
+						parentUUID,
+						db.NotificationRecipientTypeParent,
+						"Your daily digest is ready",
+						"Your insights for "+child.FirstName+" are ready to view.",
+					); err != nil {
+						log.Warn().Err(err).Str("parent_id", parentID).Msg("first-time: failed to notify parent")
+					}
+				}
+			}
+		}
+	}
 }
