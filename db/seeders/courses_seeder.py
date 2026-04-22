@@ -1,7 +1,7 @@
 import requests
 
-API_URL = ""
-API_TOKEN = ""
+API_URL = "http://24.199.123.7:1337/api"
+API_TOKEN = "7cb7ab5ef29feb52a075ca15247a0cd22537e315e7f81cbc4b8de7aebb24d56db3cdd5d1f3fceb652f192e6fd8524913ea5efcc7a1b9b098fe504a0cd7be9e8259ee411a7fdd93f3526a52769a76538902e1a4890de5470a8f2810c69f20c3d54455ae5554ae8e39646559dbdf3461bc616bdf9eec1ae90391450a739a5c0871"
 
 headers = {"Authorization": f"Bearer {API_TOKEN}", "Content-Type": "application/json"}
 

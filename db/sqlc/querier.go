@@ -103,6 +103,8 @@ type Querier interface {
 	GetLatestCompletedDigitalPermitTestByChildID(ctx context.Context, childID string) (DigitalPermitTest, error)
 	GetNextBoosterForChild(ctx context.Context, childID string) (ChildWeeklyModule, error)
 	GetNotificationsForRecipient(ctx context.Context, arg GetNotificationsForRecipientParams) ([]Notification, error)
+	GetNotificationsForRecipientPaginated(ctx context.Context, arg GetNotificationsForRecipientPaginatedParams) ([]Notification, error)
+	GetNotificationSummary(ctx context.Context, arg GetNotificationSummaryParams) (GetNotificationSummaryRow, error)
 	GetOnboardingProgressByFamilyID(ctx context.Context, familyID string) ([]GetOnboardingProgressByFamilyIDRow, error)
 	GetOnboardingStep(ctx context.Context, onboardingID string) (OnboardingStep, error)
 	GetOnboardingStepByOrder(ctx context.Context, stepOrder int32) (OnboardingStep, error)
@@ -145,6 +147,7 @@ type Querier interface {
 	LogChildActivity(ctx context.Context, arg LogChildActivityParams) (ChildActivityLog, error)
 	LogSocialMediaUsage(ctx context.Context, arg LogSocialMediaUsageParams) (SocialMediaUsageStat, error)
 	MarkNotificationAsRead(ctx context.Context, arg MarkNotificationAsReadParams) (Notification, error)
+	MarkAllNotificationsAsRead(ctx context.Context, arg MarkAllNotificationsAsReadParams) error
 	MarkSessionExpired(ctx context.Context, id uuid.UUID) (AppSession, error)
 	MarkSessionEnded(ctx context.Context, arg MarkSessionEndedParams) (AppSession, error)
 	MarkSessionReflectionTriggered(ctx context.Context, arg MarkSessionReflectionTriggeredParams) error
@@ -168,6 +171,13 @@ type Querier interface {
 	UpdateSubscriptionStatus(ctx context.Context, arg UpdateSubscriptionStatusParams) (Subscription, error)
 	UpsertChildReflectionContext(ctx context.Context, arg UpsertChildReflectionContextParams) (ChildReflectionContext, error)
 	UseDeepLinkCode(ctx context.Context, code string) (DeepLinkCode, error)
+
+	// Parent daily insights
+	CreateParentDailyInsight(ctx context.Context, arg CreateParentDailyInsightParams) (ParentDailyInsight, error)
+	GetTodayParentInsightForChild(ctx context.Context, arg GetTodayParentInsightForChildParams) (ParentDailyInsight, error)
+	GetParentInsightHistory(ctx context.Context, arg GetParentInsightHistoryParams) ([]ParentDailyInsight, error)
+	MarkParentInsightRead(ctx context.Context, arg MarkParentInsightReadParams) (ParentDailyInsight, error)
+	GetAllChildrenForParentInsightScheduler(ctx context.Context) ([]GetAllChildrenForParentInsightSchedulerRow, error)
 }
 
 var _ Querier = (*Queries)(nil)

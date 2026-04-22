@@ -3,8 +3,5 @@ app.env
 firebase-credentials.json
 HeadLamp_API_Collection.postman_collection.json
 docs/
-*.json
-
-# Environment files with secrets
-.env.development
-.env.production
+api-docs/
+headlamp-63f19-firebase-adminsdk-fbsvc-f8fe4a1661.json

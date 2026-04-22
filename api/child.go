@@ -18,11 +18,17 @@ import (
 type verifyCodeRequest struct {
 	Code     string `json:"code" binding:"required"`
 	DeviceID string `json:"device_id" binding:"required"`
+	// Optional — registers the device for push notifications in the same request
+	PushToken string `json:"push_token"`
+	Provider  string `json:"provider"`
 }
 
 type verifyCodeResponse struct {
 	PublicKey   []byte `json:"public_key"`
 	AccessToken string `json:"access_token"`
+	// Internal fields — not exposed in the JSON response.
+	ChildID  string `json:"-"`
+	ParentID string `json:"-"`
 }
 
 // verifyLinkCodeTx manages the transaction for verifying a link code and associating a device.
@@ -84,9 +90,11 @@ func (server *Server) verifyLinkCodeTx(ctx context.Context, req verifyCodeReques
 			// Device does not exist, create it.
 			log.Info().Str("device_id", req.DeviceID).Str("child_id", linkCode.ChildID).Msg("creating new device")
 			_, err = q.CreateDevice(ctx, db.CreateDeviceParams{
-				UserID:   childUUID,
-				UserType: "child",
-				DeviceID: req.DeviceID,
+				UserID:    childUUID,
+				UserType:  "child",
+				DeviceID:  req.DeviceID,
+				PushToken: pgtype.Text{String: req.PushToken, Valid: req.PushToken != ""},
+				Provider:  pgtype.Text{String: req.Provider, Valid: req.Provider != ""},
 			})
 			if err != nil {
 				log.Error().Err(err).Msg("failed to create new device")
@@ -99,6 +107,19 @@ func (server *Server) verifyLinkCodeTx(ctx context.Context, req verifyCodeReques
 				return errors.New("this device is already linked to another account")
 			}
 			log.Info().Str("device_id", req.DeviceID).Str("child_id", linkCode.ChildID).Msg("re-linking existing device.")
+			// Update push token if provided
+			if req.PushToken != "" && req.Provider != "" {
+				_, err = q.UpdateDevicePushToken(ctx, db.UpdateDevicePushTokenParams{
+					UserID:    childUUID,
+					DeviceID:  req.DeviceID,
+					PushToken: pgtype.Text{String: req.PushToken, Valid: true},
+					Provider:  pgtype.Text{String: req.Provider, Valid: true},
+				})
+				if err != nil {
+					log.Error().Err(err).Str("device_id", req.DeviceID).Msg("failed to update push token on re-link")
+					return err
+				}
+			}
 		}
 
 		// 6. Activate the device (either new or existing).
@@ -107,8 +128,25 @@ func (server *Server) verifyLinkCodeTx(ctx context.Context, req verifyCodeReques
 			UserID:   childUUID,
 		})
 		if err != nil {
-			log.Error().Err(err).Msg("failed to activate device")
+			log.Error().Err(err).Msg("verifyLinkCode: failed to activate device")
 			return err
+		}
+		log.Info().Str("device_id", req.DeviceID).Str("child_id", linkCode.ChildID).Msg("verifyLinkCode: device activated")
+
+		// Enable push notifications on the child record if a token was provided.
+		// This is best-effort: failure is logged but does not abort the transaction.
+		if req.PushToken != "" {
+			_, pnErr := q.UpdateChild(ctx, db.UpdateChildParams{
+				ID:                       linkCode.ChildID,
+				PushNotificationsEnabled: pgtype.Bool{Bool: true, Valid: true},
+			})
+			if pnErr != nil {
+				log.Error().Err(pnErr).Str("child_id", linkCode.ChildID).Msg("verifyLinkCode: failed to set push_notifications_enabled=true for child")
+			} else {
+				log.Info().Str("child_id", linkCode.ChildID).Msg("verifyLinkCode: push_notifications_enabled set to true for child")
+			}
+		} else {
+			log.Warn().Str("child_id", linkCode.ChildID).Msg("verifyLinkCode: no push_token provided, push_notifications_enabled not enabled")
 		}
 
 		// 7. Mark the link code as used
@@ -152,6 +190,8 @@ func (server *Server) verifyLinkCodeTx(ctx context.Context, req verifyCodeReques
 
 		response.PublicKey = family.PublicKey
 		response.AccessToken = customToken
+		response.ChildID = linkCode.ChildID
+		response.ParentID = parent.ParentID
 		return nil
 	})
 
@@ -276,5 +316,64 @@ func (server *Server) verifyLinkCode(ctx *gin.Context) {
 	}
 
 	log.Info().Str("code", req.Code).Msg("link code verified and device linked successfully")
+
+	// Trigger first-time reflection and parent insight in the background.
+	// Both services are idempotent so the nightly cron won't duplicate them.
+	go server.triggerFirstTimeReflections(rsp.ChildID, rsp.ParentID)
+
 	ctx.JSON(http.StatusOK, rsp)
+}
+
+// triggerFirstTimeReflections generates an immediate reflection for a child and
+// an immediate parent insight on their very first device link. It runs in a
+// background goroutine so it never blocks the login response.
+// Both underlying service calls are idempotent — if the nightly cron fires later
+// the same day it will simply return the already-generated record.
+func (server *Server) triggerFirstTimeReflections(childID, parentID string) {
+	ctx := context.Background()
+
+	// 1. Child reflection
+	if _, err := server.reflectionService.GenerateDailyReflection(ctx, childID); err != nil {
+		log.Warn().Err(err).Str("child_id", childID).Msg("first-time: failed to generate child reflection")
+	} else {
+		log.Info().Str("child_id", childID).Msg("first-time: child reflection generated")
+		if server.notificationService != nil {
+			childUUID, err := uuid.Parse(childID)
+			if err == nil {
+				if err := server.notificationService.CreateAndSend(
+					ctx,
+					childUUID,
+					db.NotificationRecipientTypeChild,
+					"Your daily reflection is ready 🌟",
+					"Take a moment to reflect on your day.",
+				); err != nil {
+					log.Warn().Err(err).Str("child_id", childID).Msg("first-time: failed to notify child")
+				}
+			}
+		}
+	}
+
+	// 2. Parent insight for this child
+	if _, err := server.parentInsightService.GenerateDailyInsight(ctx, parentID, childID); err != nil {
+		log.Warn().Err(err).Str("parent_id", parentID).Str("child_id", childID).Msg("first-time: failed to generate parent insight")
+	} else {
+		log.Info().Str("parent_id", parentID).Str("child_id", childID).Msg("first-time: parent insight generated")
+		if server.notificationService != nil {
+			parentUUID, err := uuid.Parse(parentID)
+			if err == nil {
+				child, err := server.store.GetChild(ctx, childID)
+				if err == nil {
+					if err := server.notificationService.CreateAndSend(
+						ctx,
+						parentUUID,
+						db.NotificationRecipientTypeParent,
+						"Your daily digest is ready",
+						"Your insights for "+child.FirstName+" are ready to view.",
+					); err != nil {
+						log.Warn().Err(err).Str("parent_id", parentID).Msg("first-time: failed to notify parent")
+					}
+				}
+			}
+		}
+	}
 }

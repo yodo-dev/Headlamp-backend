@@ -1,6 +1,20 @@
 include app.env
 export
 
+dev:
+	cp app.development.env app.env && go run main.go
+
+prod:
+	cp app.production.env app.env && go run main.go
+
+migratedev:
+	cp app.development.env app.env
+	migrate -path db/migration -database "$(DB_SOURCE)" -verbose up
+
+migrateprod:
+	cp app.production.env app.env
+	migrate -path db/migration -database "$(DB_SOURCE)" -verbose up
+
 network:
 	docker network create assignme
 

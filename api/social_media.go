@@ -127,4 +127,7 @@ func (server *Server) setSocialMediaAccess(ctx *gin.Context) {
 	}
 
 	ctx.JSON(http.StatusOK, result)
+
+	// Notify the child that their social media access settings have changed.
+	go server.notifyChildOfSocialMediaUpdate(uriReq.ID)
 }

@@ -96,6 +96,9 @@ func (server *Server) respondToReflection(ctx *gin.Context) {
 	}
 
 	ctx.JSON(http.StatusOK, reflection)
+
+	// Notify the parent that their child has responded to a reflection.
+	go server.notifyParentOfReflectionResponse(reflection.ChildID)
 }
 
 // ─── Child: acknowledge reflection ──────────────────────────────────────────
@@ -135,6 +138,9 @@ func (server *Server) acknowledgeReflection(ctx *gin.Context) {
 	}
 
 	ctx.JSON(http.StatusOK, gin.H{"message": "acknowledged"})
+
+	// Notify the parent that their child has acknowledged the reflection.
+	go server.notifyParentOfReflectionAcknowledge(payload.UserID)
 }
 
 // ─── Child: reflection history ───────────────────────────────────────────────

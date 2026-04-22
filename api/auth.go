@@ -1,7 +1,6 @@
 package api
 
 import (
-	"database/sql"
 	"errors"
 	"net/http"
 	"time"
@@ -9,6 +8,8 @@ import (
 	db "github.com/The-You-School-HeadLamp/headlamp_backend/db/sqlc"
 	"github.com/The-You-School-HeadLamp/headlamp_backend/util"
 	"github.com/gin-gonic/gin"
+	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/rs/zerolog/log"
 )
 
@@ -48,6 +49,10 @@ type signUpParentRequest struct {
 	Surname   string `json:"surname" binding:"required"`
 	Email     string `json:"email" binding:"required,email"`
 	Password  string `json:"password" binding:"required"`
+	// Optional — registers the device for push notifications in the same request
+	DeviceID  string `json:"device_id"`
+	PushToken string `json:"push_token"`
+	Provider  string `json:"provider"`
 }
 
 type signUpParentResponse struct {
@@ -103,6 +108,8 @@ func (server *Server) signUpParent(ctx *gin.Context) {
 		return
 	}
 
+	server.upsertDeviceIfProvided(ctx, user.Parent.ParentID, ParentUserProfile, req.DeviceID, req.PushToken, req.Provider)
+
 	ctx.JSON(http.StatusOK, signUpParentResponse{
 		AccessToken:          accessToken,
 		AccessTokenExpiresAt: accessPayload.ExpiredAt,
@@ -117,6 +124,10 @@ func (server *Server) signUpParent(ctx *gin.Context) {
 type loginParentRequest struct {
 	Email    string `json:"email" binding:"required,email"`
 	Password string `json:"password" binding:"required"`
+	// Optional — registers the device for push notifications in the same request
+	DeviceID  string `json:"device_id"`
+	PushToken string `json:"push_token"`
+	Provider  string `json:"provider"`
 }
 
 type loginParentResponse struct {
@@ -136,12 +147,12 @@ func (server *Server) loginParent(ctx *gin.Context) {
 
 	parent, err := server.store.GetParentByEmail(ctx, req.Email)
 	if err != nil {
-		if errors.Is(err, sql.ErrNoRows) {
-			log.Warn().Err(err).Str("email", req.Email).Msg("parent not found")
+		if errors.Is(err, db.ErrRecordNotFound) {
+			log.Warn().Str("email", req.Email).Msg("loginParent: parent not found")
 			ctx.JSON(http.StatusNotFound, gin.H{"error": "parent not found"})
 			return
 		}
-		log.Error().Err(err).Str("email", req.Email).Msg("failed to get parent by email")
+		log.Error().Err(err).Str("email", req.Email).Msg("loginParent: failed to get parent by email")
 		ctx.JSON(http.StatusInternalServerError, errorResponse(err))
 		return
 	}
@@ -174,6 +185,8 @@ func (server *Server) loginParent(ctx *gin.Context) {
 		return
 	}
 
+	server.upsertDeviceIfProvided(ctx, parent.ParentID, ParentUserProfile, req.DeviceID, req.PushToken, req.Provider)
+
 	ctx.JSON(http.StatusOK, loginParentResponse{
 		AccessToken:          accessToken,
 		AccessTokenExpiresAt: accessPayload.ExpiredAt,
@@ -183,4 +196,105 @@ func (server *Server) loginParent(ctx *gin.Context) {
 			CreatedAt: family.CreatedAt,
 		},
 	})
+}
+
+// upsertDeviceIfProvided registers or updates a device's push token, then enables
+// push notifications on the parent record. It is a best-effort operation: errors
+// are logged but do not affect the auth response.
+func (server *Server) upsertDeviceIfProvided(ctx *gin.Context, userIDStr, userType, deviceID, pushToken, provider string) {
+	if deviceID == "" || pushToken == "" || provider == "" {
+		log.Info().
+			Str("user_id", userIDStr).
+			Str("user_type", userType).
+			Msg("upsertDevice: skipping – device_id, push_token or provider not provided")
+		return
+	}
+
+	log.Info().
+		Str("user_id", userIDStr).
+		Str("user_type", userType).
+		Str("device_id", deviceID).
+		Str("provider", provider).
+		Msg("upsertDevice: registering device and enabling push notifications")
+
+	userID, err := uuid.Parse(userIDStr)
+	if err != nil {
+		log.Error().Err(err).Str("user_id", userIDStr).Msg("upsertDevice: invalid user id")
+		return
+	}
+
+	existingDevice, err := server.store.GetDeviceByDeviceID(ctx, deviceID)
+	if err != nil && !errors.Is(err, db.ErrRecordNotFound) {
+		log.Error().Err(err).Str("device_id", deviceID).Msg("upsertDevice: failed to look up device")
+		return
+	}
+
+	if errors.Is(err, db.ErrRecordNotFound) {
+		// Device has never been seen — create it.
+		log.Info().Str("device_id", deviceID).Str("user_id", userIDStr).Msg("upsertDevice: device not found, creating new record")
+		_, err = server.store.CreateDevice(ctx, db.CreateDeviceParams{
+			UserID:    userID,
+			UserType:  userType,
+			DeviceID:  deviceID,
+			PushToken: pgtype.Text{String: pushToken, Valid: true},
+			Provider:  pgtype.Text{String: provider, Valid: true},
+		})
+		if err != nil {
+			log.Error().Err(err).Str("device_id", deviceID).Msg("upsertDevice: failed to create device")
+			return
+		}
+		log.Info().Str("device_id", deviceID).Str("user_id", userIDStr).Msg("upsertDevice: device created successfully")
+	} else if existingDevice.UserID != userID {
+		// Device exists but belongs to a different user (e.g. reassigned/test device).
+		// Delete the stale record and create a fresh one for the current user.
+		log.Warn().
+			Str("device_id", deviceID).
+			Str("previous_user_id", existingDevice.UserID.String()).
+			Str("new_user_id", userIDStr).
+			Msg("upsertDevice: device belongs to a different user, reassigning")
+		if delErr := server.store.DeleteDeviceByID(ctx, deviceID); delErr != nil {
+			log.Error().Err(delErr).Str("device_id", deviceID).Msg("upsertDevice: failed to delete stale device record")
+			return
+		}
+		_, err = server.store.CreateDevice(ctx, db.CreateDeviceParams{
+			UserID:    userID,
+			UserType:  userType,
+			DeviceID:  deviceID,
+			PushToken: pgtype.Text{String: pushToken, Valid: true},
+			Provider:  pgtype.Text{String: provider, Valid: true},
+		})
+		if err != nil {
+			log.Error().Err(err).Str("device_id", deviceID).Msg("upsertDevice: failed to create device after reassignment")
+			return
+		}
+		log.Info().Str("device_id", deviceID).Str("user_id", userIDStr).Msg("upsertDevice: device reassigned and created successfully")
+	} else {
+		// Device exists and belongs to this user — just update the push token.
+		log.Info().Str("device_id", deviceID).Str("user_id", userIDStr).Msg("upsertDevice: device exists, updating push token")
+		_, err = server.store.UpdateDevicePushToken(ctx, db.UpdateDevicePushTokenParams{
+			UserID:    userID,
+			DeviceID:  deviceID,
+			PushToken: pgtype.Text{String: pushToken, Valid: true},
+			Provider:  pgtype.Text{String: provider, Valid: true},
+		})
+		if err != nil {
+			log.Error().Err(err).Str("device_id", deviceID).Msg("upsertDevice: failed to update device push token")
+			return
+		}
+		log.Info().Str("device_id", deviceID).Str("user_id", userIDStr).Msg("upsertDevice: device push token updated successfully")
+	}
+
+	// Device is registered — enable push notifications on the parent record so
+	// the sending path knows this user has an active token.
+	if userType == ParentUserProfile {
+		_, updateErr := server.store.UpdateParent(ctx, db.UpdateParentParams{
+			ParentID:                 userIDStr,
+			PushNotificationsEnabled: pgtype.Bool{Bool: true, Valid: true},
+		})
+		if updateErr != nil {
+			log.Error().Err(updateErr).Str("parent_id", userIDStr).Msg("upsertDevice: failed to set push_notifications_enabled=true for parent")
+		} else {
+			log.Info().Str("parent_id", userIDStr).Msg("upsertDevice: push_notifications_enabled set to true for parent")
+		}
+	}
 }

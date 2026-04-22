@@ -727,13 +727,18 @@ func (server *Server) logActivityAndNotify(ctx *gin.Context, childID, activityTy
 func (server *Server) sendParentNotification(_ db.Child, parent db.Parent, title, message string) {
 	ctx := context.Background()
 
+	log.Info().
+		Str("parent_id", parent.ParentID).
+		Str("title", title).
+		Msg("sendParentNotification: saving DB record and sending FCM push")
+
 	parentUUID, err := uuid.Parse(parent.ParentID)
 	if err != nil {
-		log.Error().Err(err).Str("parent_id", parent.ParentID).Msg("failed to parse parent ID for push tokens")
+		log.Error().Err(err).Str("parent_id", parent.ParentID).Msg("sendParentNotification: invalid parent UUID")
 		return
 	}
 
-	// Always save the notification to the database
+	// Always persist the notification record in the database.
 	_, err = server.store.CreateNotification(ctx, db.CreateNotificationParams{
 		RecipientID:   parentUUID,
 		RecipientType: db.NotificationRecipientTypeParent,
@@ -742,10 +747,23 @@ func (server *Server) sendParentNotification(_ db.Child, parent db.Parent, title
 		SentAt:        pgtype.Timestamptz{Time: time.Now(), Valid: true},
 	})
 	if err != nil {
-		log.Error().Err(err).Str("parent_id", parent.ParentID).Msg("failed to save notification to database")
+		log.Error().Err(err).Str("parent_id", parent.ParentID).Msg("sendParentNotification: failed to save notification to database")
+		// Continue — still attempt push delivery even if DB write failed.
+	} else {
+		log.Info().Str("parent_id", parent.ParentID).Msg("sendParentNotification: notification record saved to database")
 	}
 
-	log.Info().Str("parent_id", parent.ParentID).Msg("saved notification")
+	// Deliver the FCM push notification via the notification service.
+	if server.notificationService == nil {
+		log.Warn().Str("parent_id", parent.ParentID).Msg("sendParentNotification: notification service not initialised, FCM push skipped")
+		return
+	}
+
+	if err := server.notificationService.SendPush(ctx, parentUUID, title, message); err != nil {
+		log.Error().Err(err).Str("parent_id", parent.ParentID).Msg("sendParentNotification: FCM push failed")
+	} else {
+		log.Info().Str("parent_id", parent.ParentID).Msg("sendParentNotification: FCM push dispatched successfully")
+	}
 }
 
 func (server *Server) fetchAllExternalWeeklyModules(ctx *gin.Context) ([]extModule, error) {
@@ -1584,4 +1602,170 @@ func (server *Server) fetchExternalQuizData(ctx *gin.Context, quizID string) (*e
 	}
 
 	return &extQuizResp.Data, nil
+}
+
+// GET /v1/child/courses
+// Returns all courses with per-course progress for the authenticated child.
+func (server *Server) getMyCoursesForChild(ctx *gin.Context) {
+	child := ctx.MustGet(authorizationPayloadKey).(db.Child)
+	childID := child.ID
+
+	allCourses, err := server.fetchAllExternalCourses(ctx)
+	if err != nil {
+		return
+	}
+
+	var responseCourses []CleanCourseWithStatus
+	var firstIncompleteCourseFound bool
+
+	for _, courseItem := range allCourses {
+		courseData, err := server.fetchExternalCourseData(ctx, courseItem.DocumentID)
+		if err != nil {
+			log.Warn().Err(err).Str("course_id", courseItem.DocumentID).Msg("could not fetch course details, skipping")
+			continue
+		}
+
+		if len(courseData.Modules) == 0 {
+			responseCourses = append(responseCourses, CleanCourseWithStatus{
+				ID:                   courseItem.DocumentID,
+				Title:                courseItem.Title,
+				Description:          flattenDescription(courseItem.Description),
+				IsCompleted:          true,
+				IsLocked:             firstIncompleteCourseFound,
+				TotalNumberOfModules: 0,
+				CompletedModules:     0,
+			})
+			continue
+		}
+
+		moduleIDs := make([]string, len(courseData.Modules))
+		for i, m := range courseData.Modules {
+			moduleIDs[i] = m.DocumentID
+		}
+
+		progress, err := server.store.GetChildModuleProgressForCourse(ctx, db.GetChildModuleProgressForCourseParams{
+			ChildID:   childID,
+			CourseID:  courseItem.DocumentID,
+			ModuleIds: moduleIDs,
+		})
+		if err != nil && err != sql.ErrNoRows {
+			ctx.JSON(http.StatusInternalServerError, errorResponse(err))
+			return
+		}
+
+		completedCount := 0
+		for _, p := range progress {
+			if p.IsCompleted {
+				completedCount++
+			}
+		}
+
+		isCourseCompleted := completedCount == len(courseData.Modules)
+		isLocked := false
+		if firstIncompleteCourseFound {
+			isLocked = true
+		} else if !isCourseCompleted {
+			firstIncompleteCourseFound = true
+		}
+
+		responseCourses = append(responseCourses, CleanCourseWithStatus{
+			ID:                   courseItem.DocumentID,
+			Title:                courseItem.Title,
+			Description:          flattenDescription(courseItem.Description),
+			IsCompleted:          isCourseCompleted,
+			IsLocked:             isLocked,
+			TotalNumberOfModules: len(courseData.Modules),
+			CompletedModules:     completedCount,
+		})
+	}
+
+	ctx.JSON(http.StatusOK, gin.H{"courses": responseCourses})
+}
+
+// GET /v1/child/courses/stats
+// Returns aggregate course stats for the authenticated child.
+func (server *Server) getMyCoursesStatsForChild(ctx *gin.Context) {
+	child := ctx.MustGet(authorizationPayloadKey).(db.Child)
+	childID := child.ID
+
+	allCourses, err := server.fetchAllExternalCourses(ctx)
+	if err != nil {
+		return
+	}
+
+	var wg sync.WaitGroup
+	resultsChan := make(chan courseDetailResult, len(allCourses))
+
+	for _, courseItem := range allCourses {
+		wg.Add(1)
+		go func(courseID string) {
+			defer wg.Done()
+			courseData, err := server.fetchExternalCourseData(ctx, courseID)
+			resultsChan <- courseDetailResult{courseData: courseData, err: err}
+		}(courseItem.DocumentID)
+	}
+
+	wg.Wait()
+	close(resultsChan)
+
+	var totalTimeTakenMins float64
+	var totalQuizzes, totalModules, completedModules int
+
+	for result := range resultsChan {
+		if result.err != nil {
+			log.Warn().Err(result.err).Msg("failed to fetch course details for stats")
+			continue
+		}
+
+		courseData := result.courseData
+		totalModules += len(courseData.Modules)
+		moduleIDs := make([]string, len(courseData.Modules))
+
+		for i, module := range courseData.Modules {
+			moduleIDs[i] = module.DocumentID
+			if module.Quiz != nil {
+				totalQuizzes++
+				totalTimeTakenMins += float64(module.Quiz.EstimatedCompletionTimeInMins)
+			}
+			if module.Video != nil {
+				totalTimeTakenMins += module.Video.Size / 10
+			}
+		}
+
+		if len(moduleIDs) > 0 {
+			progress, err := server.store.GetChildModuleProgressForCourse(ctx, db.GetChildModuleProgressForCourseParams{
+				ChildID:   childID,
+				CourseID:  courseData.DocumentID,
+				ModuleIds: moduleIDs,
+			})
+			if err != nil && err != sql.ErrNoRows {
+				ctx.JSON(http.StatusInternalServerError, errorResponse(err))
+				return
+			}
+			for _, p := range progress {
+				if p.IsCompleted {
+					completedModules++
+				}
+			}
+		}
+	}
+
+	var moduleCompletionRate float64
+	if totalModules > 0 {
+		moduleCompletionRate = math.Round((float64(completedModules)/float64(totalModules))*100*100) / 100
+	}
+
+	isStarted, err := server.store.CheckQuizAttemptExistsForChild(ctx, childID)
+	if err != nil {
+		ctx.JSON(http.StatusInternalServerError, errorResponse(err))
+		return
+	}
+
+	ctx.JSON(http.StatusOK, CourseStatsResponse{
+		EstimatedTotalTimeTakenInMins: int64(totalTimeTakenMins),
+		TotalCourses:                  len(allCourses),
+		TotalQuizzes:                  totalQuizzes,
+		ModuleCompletionRate:          moduleCompletionRate,
+		IsStarted:                     isStarted,
+	})
 }

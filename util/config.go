@@ -39,9 +39,18 @@ type Config struct {
 	ExternalRequestTimeout time.Duration `mapstructure:"EXTERNAL_REQUEST_TIMEOUT"`
 	OpenAIAPIKey           string        `mapstructure:"OPENAI_API_KEY"`
 
+	// Firebase Admin SDK
+	FirebaseProjectID                string `mapstructure:"FIREBASE_PROJECT_ID"`
+	FirebaseServiceAccountJSON       string `mapstructure:"FIREBASE_SERVICE_ACCOUNT_JSON"`        // raw JSON string (dev/fallback)
+	FirebaseServiceAccountJSONFile   string `mapstructure:"FIREBASE_SERVICE_ACCOUNT_JSON_FILE"`   // path to service account JSON file
+	FirebaseServiceAccountJSONBase64 string `mapstructure:"FIREBASE_SERVICE_ACCOUNT_JSON_BASE64"` // base64-encoded JSON (recommended for production env vars)
+
 	// Reflection scheduler (standard 5-field cron expression)
 	ReflectionCronSchedule string `mapstructure:"REFLECTION_CRON_SCHEDULE"`
 	ReflectionTestMode     bool   `mapstructure:"REFLECTION_TEST_MODE"` // bypass idempotency for testing
+
+	// Parent insight scheduler (standard 5-field cron expression)
+	ParentInsightCronSchedule string `mapstructure:"PARENT_INSIGHT_CRON_SCHEDULE"`
 }
 
 // LoadConfig reads configuration from file or environment variables.
@@ -87,6 +96,11 @@ func LoadConfig(path string) (config Config, err error) {
 	viper.BindEnv("OPENAI_API_KEY")
 	viper.BindEnv("ONESIGNAL_APP_ID")
 	viper.BindEnv("ONESIGNAL_API_KEY")
+	viper.BindEnv("FIREBASE_PROJECT_ID")
+	viper.BindEnv("FIREBASE_SERVICE_ACCOUNT_JSON")
+	viper.BindEnv("REFLECTION_CRON_SCHEDULE")
+	viper.BindEnv("REFLECTION_TEST_MODE")
+	viper.BindEnv("PARENT_INSIGHT_CRON_SCHEDULE")
 
 	err = viper.Unmarshal(&config)
 	fmt.Println(config)

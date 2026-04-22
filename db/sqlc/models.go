@@ -795,3 +795,15 @@ type WeeklyModuleSchedule struct {
 	WeekStartDate pgtype.Date `json:"week_start_date"`
 	IsActive      bool        `json:"is_active"`
 }
+
+type ParentDailyInsight struct {
+	ID             uuid.UUID   `json:"id"`
+	ParentID       string      `json:"parent_id"`
+	ChildID        string      `json:"child_id"`
+	Date           pgtype.Date `json:"date"`
+	InsightContent []byte      `json:"insight_content"`
+	OverallTone    string      `json:"overall_tone"`
+	IsRead         bool        `json:"is_read"`
+	GeneratedAt    time.Time   `json:"generated_at"`
+	CreatedAt      time.Time   `json:"created_at"`
+}

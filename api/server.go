@@ -2,9 +2,14 @@ package api
 
 import (
 	"context"
+	"encoding/base64"
+	"fmt"
 	"net/http"
 	"time"
 
+	firebaseAdmin "firebase.google.com/go/v4"
+	firebaseAuth "firebase.google.com/go/v4/auth"
+	firebaseMessaging "firebase.google.com/go/v4/messaging"
 	db "github.com/The-You-School-HeadLamp/headlamp_backend/db/sqlc"
 	"github.com/The-You-School-HeadLamp/headlamp_backend/gpt"
 	"github.com/The-You-School-HeadLamp/headlamp_backend/service"
@@ -12,6 +17,7 @@ import (
 	"github.com/The-You-School-HeadLamp/headlamp_backend/util"
 	"github.com/gin-gonic/gin"
 	"github.com/rs/zerolog/log"
+	"google.golang.org/api/option"
 )
 
 // Server serves HTTP requests for our service.
@@ -24,12 +30,17 @@ type Server struct {
 	oauthSessionStore *OAuthSessionStore
 	uploader          *util.Uploader
 	gptClient         gpt.GptClient
+	firebaseAuth      *firebaseAuth.Client
+	firebaseMsg       *firebaseMessaging.Client
 
 	// Services
-	reflectionService   *service.ReflectionService
-	reflectionScheduler *service.ReflectionScheduler
-	insightsService     *service.InsightsService
-	sessionHub          *SessionHub
+	notificationService    *service.NotificationService
+	reflectionService      *service.ReflectionService
+	reflectionScheduler    *service.ReflectionScheduler
+	insightsService        *service.InsightsService
+	parentInsightService   *service.ParentInsightService
+	parentInsightScheduler *service.ParentInsightScheduler
+	sessionHub             *SessionHub
 }
 
 // NewServer creates a new HTTP server and sets up routing.
@@ -38,18 +49,32 @@ func NewServer(config util.Config, store db.Store, tokenMaker token.Maker, gptCl
 
 	reflectionSvc := service.NewReflectionService(store, gptClient)
 	insightsSvc := service.NewInsightsService(store, gptClient)
+	parentInsightSvc := service.NewParentInsightService(store, gptClient)
+
+	// Initialize Firebase Admin SDK
+	fbAuthClient, fbMsgClient, err := initFirebaseApp(context.Background(), config)
+	if err != nil {
+		return nil, fmt.Errorf("failed to initialize firebase: %w", err)
+	}
+
+	notificationSvc := service.NewNotificationService(store, fbMsgClient)
 
 	server := &Server{
-		config:              config,
-		store:               store,
-		tokenMaker:          tokenMaker,
-		uploader:            uploader,
-		oauthSessionStore:   NewOAuthSessionStore(3 * time.Minute),
-		gptClient:           gptClient,
-		reflectionService:   reflectionSvc,
-		reflectionScheduler: service.NewReflectionScheduler(store, reflectionSvc, config.ReflectionTestMode),
-		insightsService:     insightsSvc,
-		sessionHub:          NewSessionHub(),
+		config:                 config,
+		store:                  store,
+		tokenMaker:             tokenMaker,
+		uploader:               uploader,
+		oauthSessionStore:      NewOAuthSessionStore(3 * time.Minute),
+		gptClient:              gptClient,
+		firebaseAuth:           fbAuthClient,
+		firebaseMsg:            fbMsgClient,
+		notificationService:    notificationSvc,
+		reflectionService:      reflectionSvc,
+		reflectionScheduler:    service.NewReflectionScheduler(store, reflectionSvc, notificationSvc, config.ReflectionTestMode),
+		insightsService:        insightsSvc,
+		parentInsightService:   parentInsightSvc,
+		parentInsightScheduler: service.NewParentInsightScheduler(store, parentInsightSvc, notificationSvc),
+		sessionHub:             NewSessionHub(),
 	}
 
 	SetupValidator()
@@ -62,6 +87,11 @@ func NewServer(config util.Config, store db.Store, tokenMaker token.Maker, gptCl
 
 	// Start the daily reflection scheduler
 	if err := server.reflectionScheduler.Start(config.ReflectionCronSchedule); err != nil {
+		return nil, err
+	}
+
+	// Start the nightly parent insight scheduler
+	if err := server.parentInsightScheduler.Start(config.ParentInsightCronSchedule); err != nil {
 		return nil, err
 	}
 
@@ -80,6 +110,7 @@ func (server *Server) setupRouter() {
 	v1.GET("/auth/parent/oauth/:provider/start", server.oauthParentStart)
 	v1.GET("/auth/parent/oauth/:provider/callback", server.oauthParentCallback)
 	v1.POST("/auth/parent/oauth/:provider/process", server.processOAuthIdToken)
+	v1.POST("/auth/parent/firebase", server.processFirebaseIdToken)
 
 	// Public routes
 	v1.POST("/child/link-code/verify", server.verifyLinkCode)
@@ -90,6 +121,8 @@ func (server *Server) setupRouter() {
 	{
 		notificationRoutes.POST("/device/register", server.registerDevice)
 		notificationRoutes.GET("", server.getNotifications)
+		notificationRoutes.GET("/summary", server.getNotificationSummary)
+		notificationRoutes.POST("/read-all", server.markAllNotificationsAsRead)
 		notificationRoutes.POST("/:id/read", server.markNotificationAsRead)
 	}
 
@@ -114,6 +147,10 @@ func (server *Server) setupRouter() {
 		childRoutes.GET("/reflections/history", server.getReflectionHistory)
 		childRoutes.GET("/reflections/stats", server.getReflectionStats)
 		childRoutes.GET("/reflections/daily", server.getDailyReflection)
+
+		// Course progress routes for child
+		childRoutes.GET("/courses", server.getMyCoursesForChild)
+		childRoutes.GET("/courses/stats", server.getMyCoursesStatsForChild)
 	}
 
 	// Activity tracking routes
@@ -165,6 +202,11 @@ func (server *Server) setupRouter() {
 		parentRoutes.GET("/child/:id/insights/engagement", server.getEngagementOverview)
 		parentRoutes.GET("/child/:id/insights/content-monitoring", server.getContentMonitoringSummary)
 		parentRoutes.POST("/child/:id/insights/content-monitoring/event", server.postContentMonitoringEvent)
+
+		// Parent daily insights
+		parentRoutes.GET("/child/:id/insights/daily", server.getParentDailyInsight)
+		parentRoutes.GET("/child/:id/insights/daily/history", server.getParentDailyInsightHistory)
+		parentRoutes.POST("/child/:id/insights/daily/:insight_id/read", server.markParentInsightRead)
 	}
 
 	server.router = router
@@ -205,4 +247,52 @@ func (server *Server) StopScheduler() {
 
 func errorResponse(err error) gin.H {
 	return gin.H{"error": err.Error()}
+}
+
+// initFirebaseApp initialises both a Firebase Auth client and a Firebase Messaging client.
+// It prefers FIREBASE_SERVICE_ACCOUNT_JSON_FILE (a path to the JSON file on disk), then
+// FIREBASE_SERVICE_ACCOUNT_JSON_BASE64 (base64-encoded JSON, safe for env vars), then
+// FIREBASE_SERVICE_ACCOUNT_JSON (raw inline JSON, dev only). Returns (nil, nil, nil) when
+// none is set so that local development environments still start up without Firebase.
+func initFirebaseApp(ctx context.Context, config util.Config) (*firebaseAuth.Client, *firebaseMessaging.Client, error) {
+	var opt option.ClientOption
+
+	switch {
+	case config.FirebaseServiceAccountJSONFile != "":
+		// Option 1: load from file (no escaping issues).
+		log.Info().Str("path", config.FirebaseServiceAccountJSONFile).Msg("loading Firebase credentials from file")
+		opt = option.WithCredentialsFile(config.FirebaseServiceAccountJSONFile)
+	case config.FirebaseServiceAccountJSONBase64 != "":
+		// Option 2: base64-encoded JSON — safe to store in systemd env files.
+		decoded, err := base64.StdEncoding.DecodeString(config.FirebaseServiceAccountJSONBase64)
+		if err != nil {
+			return nil, nil, fmt.Errorf("firebase: failed to base64-decode credentials: %w", err)
+		}
+		opt = option.WithCredentialsJSON(decoded)
+	case config.FirebaseServiceAccountJSON != "":
+		// Option 3: raw inline JSON (dev only — newlines are corrupted by systemd).
+		opt = option.WithCredentialsJSON([]byte(config.FirebaseServiceAccountJSON))
+	default:
+		log.Warn().Msg("no Firebase credentials configured – Firebase disabled")
+		return nil, nil, nil
+	}
+	app, err := firebaseAdmin.NewApp(ctx, &firebaseAdmin.Config{
+		ProjectID: config.FirebaseProjectID,
+	}, opt)
+	if err != nil {
+		return nil, nil, fmt.Errorf("firebase.NewApp: %w", err)
+	}
+
+	authClient, err := app.Auth(ctx)
+	if err != nil {
+		return nil, nil, fmt.Errorf("firebase app.Auth: %w", err)
+	}
+
+	msgClient, err := app.Messaging(ctx)
+	if err != nil {
+		return nil, nil, fmt.Errorf("firebase app.Messaging: %w", err)
+	}
+
+	log.Info().Str("project_id", config.FirebaseProjectID).Msg("Firebase Auth and Messaging clients initialised")
+	return authClient, msgClient, nil
 }
