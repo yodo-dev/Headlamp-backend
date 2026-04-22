@@ -35,6 +35,12 @@ func (s *NotificationService) CreateAndSend(
 	recipientType db.NotificationRecipientType,
 	title, body string,
 ) error {
+	log.Info().
+		Str("recipient_id", recipientID.String()).
+		Str("recipient_type", string(recipientType)).
+		Str("title", title).
+		Msg("notification: persisting record and dispatching push")
+
 	now := time.Now()
 	if _, err := s.store.CreateNotification(ctx, db.CreateNotificationParams{
 		RecipientID:   recipientID,
@@ -45,8 +51,10 @@ func (s *NotificationService) CreateAndSend(
 	}); err != nil {
 		log.Error().Err(err).
 			Str("recipient_id", recipientID.String()).
-			Msg("notification: failed to persist record")
+			Msg("notification: failed to persist DB record")
 		// continue — still attempt push delivery
+	} else {
+		log.Info().Str("recipient_id", recipientID.String()).Msg("notification: DB record saved")
 	}
 
 	return s.SendPush(ctx, recipientID, title, body)
@@ -56,11 +64,15 @@ func (s *NotificationService) CreateAndSend(
 // writing a notification record to the database.
 func (s *NotificationService) SendPush(ctx context.Context, recipientID uuid.UUID, title, body string) error {
 	if s.messaging == nil {
-		return nil // Firebase not configured (dev / test mode)
+		log.Warn().
+			Str("recipient_id", recipientID.String()).
+			Msg("notification: Firebase messaging client is nil – FCM push skipped (check FIREBASE_SERVICE_ACCOUNT_JSON env var)")
+		return nil
 	}
 
 	rawTokens, err := s.store.ListPushTokensForUser(ctx, recipientID)
 	if err != nil {
+		log.Error().Err(err).Str("recipient_id", recipientID.String()).Msg("notification: failed to list push tokens")
 		return err
 	}
 
@@ -71,7 +83,15 @@ func (s *NotificationService) SendPush(ctx context.Context, recipientID uuid.UUI
 		}
 	}
 
+	log.Info().
+		Str("recipient_id", recipientID.String()).
+		Int("token_count", len(tokens)).
+		Msg("notification: found push tokens for recipient")
+
 	if len(tokens) == 0 {
+		log.Warn().
+			Str("recipient_id", recipientID.String()).
+			Msg("notification: no push tokens found for recipient – push not sent (check device registration)")
 		return nil
 	}
 
@@ -82,6 +102,11 @@ func (s *NotificationService) SendPush(ctx context.Context, recipientID uuid.UUI
 // failures. Invalid tokens are reported but not cleaned up here — token lifecycle
 // management should be handled separately via the device registration flow.
 func (s *NotificationService) sendToTokens(ctx context.Context, tokens []string, title, body string) error {
+	log.Info().
+		Int("token_count", len(tokens)).
+		Str("title", title).
+		Msg("notification: sending FCM multicast message")
+
 	msg := &firebaseMessaging.MulticastMessage{
 		Tokens: tokens,
 		Notification: &firebaseMessaging.Notification{
@@ -92,8 +117,15 @@ func (s *NotificationService) sendToTokens(ctx context.Context, tokens []string,
 
 	resp, err := s.messaging.SendEachForMulticast(ctx, msg)
 	if err != nil {
+		log.Error().Err(err).Msg("notification: FCM SendEachForMulticast failed")
 		return err
 	}
+
+	log.Info().
+		Int("success_count", resp.SuccessCount).
+		Int("failure_count", resp.FailureCount).
+		Int("total_tokens", len(tokens)).
+		Msg("notification: FCM multicast complete")
 
 	if resp.FailureCount > 0 {
 		for i, r := range resp.Responses {
@@ -105,11 +137,6 @@ func (s *NotificationService) sendToTokens(ctx context.Context, tokens []string,
 			}
 		}
 	}
-
-	log.Debug().
-		Int("sent", resp.SuccessCount).
-		Int("failed", resp.FailureCount).
-		Msg("notification: FCM multicast complete")
 
 	return nil
 }

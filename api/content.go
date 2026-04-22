@@ -727,13 +727,18 @@ func (server *Server) logActivityAndNotify(ctx *gin.Context, childID, activityTy
 func (server *Server) sendParentNotification(_ db.Child, parent db.Parent, title, message string) {
 	ctx := context.Background()
 
+	log.Info().
+		Str("parent_id", parent.ParentID).
+		Str("title", title).
+		Msg("sendParentNotification: saving DB record and sending FCM push")
+
 	parentUUID, err := uuid.Parse(parent.ParentID)
 	if err != nil {
-		log.Error().Err(err).Str("parent_id", parent.ParentID).Msg("failed to parse parent ID for push tokens")
+		log.Error().Err(err).Str("parent_id", parent.ParentID).Msg("sendParentNotification: invalid parent UUID")
 		return
 	}
 
-	// Always save the notification to the database
+	// Always persist the notification record in the database.
 	_, err = server.store.CreateNotification(ctx, db.CreateNotificationParams{
 		RecipientID:   parentUUID,
 		RecipientType: db.NotificationRecipientTypeParent,
@@ -742,10 +747,23 @@ func (server *Server) sendParentNotification(_ db.Child, parent db.Parent, title
 		SentAt:        pgtype.Timestamptz{Time: time.Now(), Valid: true},
 	})
 	if err != nil {
-		log.Error().Err(err).Str("parent_id", parent.ParentID).Msg("failed to save notification to database")
+		log.Error().Err(err).Str("parent_id", parent.ParentID).Msg("sendParentNotification: failed to save notification to database")
+		// Continue — still attempt push delivery even if DB write failed.
+	} else {
+		log.Info().Str("parent_id", parent.ParentID).Msg("sendParentNotification: notification record saved to database")
 	}
 
-	log.Info().Str("parent_id", parent.ParentID).Msg("saved notification")
+	// Deliver the FCM push notification via the notification service.
+	if server.notificationService == nil {
+		log.Warn().Str("parent_id", parent.ParentID).Msg("sendParentNotification: notification service not initialised, FCM push skipped")
+		return
+	}
+
+	if err := server.notificationService.SendPush(ctx, parentUUID, title, message); err != nil {
+		log.Error().Err(err).Str("parent_id", parent.ParentID).Msg("sendParentNotification: FCM push failed")
+	} else {
+		log.Info().Str("parent_id", parent.ParentID).Msg("sendParentNotification: FCM push dispatched successfully")
+	}
 }
 
 func (server *Server) fetchAllExternalWeeklyModules(ctx *gin.Context) ([]extModule, error) {

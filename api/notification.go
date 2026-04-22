@@ -1,7 +1,6 @@
 package api
 
 import (
-	"database/sql"
 	"errors"
 	"net/http"
 
@@ -10,6 +9,7 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgtype"
+	"github.com/rs/zerolog/log"
 )
 
 // ─── Device registration ─────────────────────────────────────────────────────
@@ -34,14 +34,24 @@ func (server *Server) registerDevice(ctx *gin.Context) {
 		return
 	}
 
-	// Check if the device already exists
-	_, err = server.store.GetDeviceByDeviceID(ctx, req.DeviceID)
-	if err != nil && !errors.Is(err, sql.ErrNoRows) {
+	log.Info().
+		Str("user_id", authPayload.UserID).
+		Str("role", authPayload.Role).
+		Str("device_id", req.DeviceID).
+		Str("provider", req.Provider).
+		Msg("registerDevice: upserting device record")
+
+	// Check if the device already exists.
+	existingDevice, err := server.store.GetDeviceByDeviceID(ctx, req.DeviceID)
+	if err != nil && !errors.Is(err, db.ErrRecordNotFound) {
+		log.Error().Err(err).Str("device_id", req.DeviceID).Msg("registerDevice: failed to look up device")
 		ctx.JSON(http.StatusInternalServerError, errorResponse(err))
 		return
 	}
 
-	if errors.Is(err, sql.ErrNoRows) {
+	if errors.Is(err, db.ErrRecordNotFound) {
+		// Device has never been seen — create it.
+		log.Info().Str("device_id", req.DeviceID).Str("user_id", authPayload.UserID).Msg("registerDevice: device not found, creating new record")
 		_, err = server.store.CreateDevice(ctx, db.CreateDeviceParams{
 			UserID:    userID,
 			UserType:  authPayload.Role,
@@ -50,10 +60,40 @@ func (server *Server) registerDevice(ctx *gin.Context) {
 			Provider:  pgtype.Text{String: req.Provider, Valid: true},
 		})
 		if err != nil {
+			log.Error().Err(err).Str("device_id", req.DeviceID).Msg("registerDevice: failed to create device")
 			ctx.JSON(http.StatusInternalServerError, errorResponse(err))
 			return
 		}
+		log.Info().Str("device_id", req.DeviceID).Str("user_id", authPayload.UserID).Msg("registerDevice: device created successfully")
+	} else if existingDevice.UserID != userID {
+		// Device exists but belongs to a different user (e.g. reassigned/test device).
+		// Delete the stale record and create a fresh one for the current user.
+		log.Warn().
+			Str("device_id", req.DeviceID).
+			Str("previous_user_id", existingDevice.UserID.String()).
+			Str("new_user_id", authPayload.UserID).
+			Msg("registerDevice: device belongs to a different user, reassigning")
+		if delErr := server.store.DeleteDeviceByID(ctx, req.DeviceID); delErr != nil {
+			log.Error().Err(delErr).Str("device_id", req.DeviceID).Msg("registerDevice: failed to delete stale device record")
+			ctx.JSON(http.StatusInternalServerError, errorResponse(delErr))
+			return
+		}
+		_, err = server.store.CreateDevice(ctx, db.CreateDeviceParams{
+			UserID:    userID,
+			UserType:  authPayload.Role,
+			DeviceID:  req.DeviceID,
+			PushToken: pgtype.Text{String: req.PushToken, Valid: true},
+			Provider:  pgtype.Text{String: req.Provider, Valid: true},
+		})
+		if err != nil {
+			log.Error().Err(err).Str("device_id", req.DeviceID).Msg("registerDevice: failed to create device after reassignment")
+			ctx.JSON(http.StatusInternalServerError, errorResponse(err))
+			return
+		}
+		log.Info().Str("device_id", req.DeviceID).Str("user_id", authPayload.UserID).Msg("registerDevice: device reassigned and created successfully")
 	} else {
+		// Device exists and belongs to this user — just update the push token.
+		log.Info().Str("device_id", req.DeviceID).Str("user_id", authPayload.UserID).Msg("registerDevice: device exists, updating push token")
 		_, err = server.store.UpdateDevicePushToken(ctx, db.UpdateDevicePushTokenParams{
 			UserID:    userID,
 			DeviceID:  req.DeviceID,
@@ -61,9 +101,38 @@ func (server *Server) registerDevice(ctx *gin.Context) {
 			Provider:  pgtype.Text{String: req.Provider, Valid: true},
 		})
 		if err != nil {
+			log.Error().Err(err).Str("device_id", req.DeviceID).Msg("registerDevice: failed to update device push token")
 			ctx.JSON(http.StatusInternalServerError, errorResponse(err))
 			return
 		}
+		log.Info().Str("device_id", req.DeviceID).Str("user_id", authPayload.UserID).Msg("registerDevice: push token updated successfully")
+	}
+
+	// Enable push notifications on the user record so the sending path sees this
+	// user as opted-in. Best-effort: log errors but do not fail the request.
+	switch authPayload.Role {
+	case "parent":
+		_, updateErr := server.store.UpdateParent(ctx, db.UpdateParentParams{
+			ParentID:                 authPayload.UserID,
+			PushNotificationsEnabled: pgtype.Bool{Bool: true, Valid: true},
+		})
+		if updateErr != nil {
+			log.Error().Err(updateErr).Str("parent_id", authPayload.UserID).Msg("registerDevice: failed to set push_notifications_enabled=true for parent")
+		} else {
+			log.Info().Str("parent_id", authPayload.UserID).Msg("registerDevice: push_notifications_enabled set to true for parent")
+		}
+	case "child":
+		_, updateErr := server.store.UpdateChild(ctx, db.UpdateChildParams{
+			ID:                       authPayload.UserID,
+			PushNotificationsEnabled: pgtype.Bool{Bool: true, Valid: true},
+		})
+		if updateErr != nil {
+			log.Error().Err(updateErr).Str("child_id", authPayload.UserID).Msg("registerDevice: failed to set push_notifications_enabled=true for child")
+		} else {
+			log.Info().Str("child_id", authPayload.UserID).Msg("registerDevice: push_notifications_enabled set to true for child")
+		}
+	default:
+		log.Warn().Str("role", authPayload.Role).Msg("registerDevice: unknown role, skipping push toggle update")
 	}
 
 	ctx.JSON(http.StatusOK, gin.H{"status": "ok"})
@@ -192,7 +261,7 @@ func (server *Server) markNotificationAsRead(ctx *gin.Context) {
 		RecipientID: recipientID,
 	})
 	if err != nil {
-		if err == sql.ErrNoRows {
+		if err == db.ErrRecordNotFound {
 			ctx.JSON(http.StatusNotFound, errorResponse(errors.New("notification not found")))
 			return
 		}

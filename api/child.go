@@ -128,8 +128,25 @@ func (server *Server) verifyLinkCodeTx(ctx context.Context, req verifyCodeReques
 			UserID:   childUUID,
 		})
 		if err != nil {
-			log.Error().Err(err).Msg("failed to activate device")
+			log.Error().Err(err).Msg("verifyLinkCode: failed to activate device")
 			return err
+		}
+		log.Info().Str("device_id", req.DeviceID).Str("child_id", linkCode.ChildID).Msg("verifyLinkCode: device activated")
+
+		// Enable push notifications on the child record if a token was provided.
+		// This is best-effort: failure is logged but does not abort the transaction.
+		if req.PushToken != "" {
+			_, pnErr := q.UpdateChild(ctx, db.UpdateChildParams{
+				ID:                       linkCode.ChildID,
+				PushNotificationsEnabled: pgtype.Bool{Bool: true, Valid: true},
+			})
+			if pnErr != nil {
+				log.Error().Err(pnErr).Str("child_id", linkCode.ChildID).Msg("verifyLinkCode: failed to set push_notifications_enabled=true for child")
+			} else {
+				log.Info().Str("child_id", linkCode.ChildID).Msg("verifyLinkCode: push_notifications_enabled set to true for child")
+			}
+		} else {
+			log.Warn().Str("child_id", linkCode.ChildID).Msg("verifyLinkCode: no push_token provided, push_notifications_enabled not enabled")
 		}
 
 		// 7. Mark the link code as used
