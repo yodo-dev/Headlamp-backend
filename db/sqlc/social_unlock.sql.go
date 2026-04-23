@@ -142,8 +142,8 @@ func (q *Queries) UpsertChildCourseUnlock(ctx context.Context, arg UpsertChildCo
 const updateChildCourseUnlockStatus = `
 UPDATE child_course_unlock SET
   status       = $3,
-  unlocked_at  = CASE WHEN $3 = 'UNLOCKED'  AND unlocked_at  IS NULL THEN NOW() ELSE unlocked_at  END,
-  completed_at = CASE WHEN $3 = 'COMPLETED' AND completed_at IS NULL THEN NOW() ELSE completed_at END,
+  unlocked_at  = CASE WHEN $3::varchar = 'UNLOCKED'  AND unlocked_at  IS NULL THEN NOW() ELSE unlocked_at  END,
+  completed_at = CASE WHEN $3::varchar = 'COMPLETED' AND completed_at IS NULL THEN NOW() ELSE completed_at END,
   updated_at   = NOW()
 WHERE child_id = $1 AND course_id = $2
 RETURNING id, child_id, course_id, course_order, status, unlocked_at, completed_at, created_at, updated_at

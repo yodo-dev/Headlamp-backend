@@ -222,6 +222,109 @@ func (server *Server) recalculateUnlockSlots(ctx context.Context, childID string
 	return promoted, nil
 }
 
+// tryAutoCompleteCourseIfEligible marks a course complete and applies unlock side-effects
+// when all course modules are complete. It is safe to call repeatedly.
+func (server *Server) tryAutoCompleteCourseIfEligible(ctx context.Context, childID, courseID string) {
+	if childID == "" || courseID == "" {
+		return
+	}
+
+	if err := server.ensureUnlockSystemSeeded(ctx, childID); err != nil {
+		log.Warn().Err(err).Str("child_id", childID).Str("course_id", courseID).Msg("autoCompleteCourse: seed failed (continuing with existing DB state)")
+	}
+
+	gate, err := server.store.GetChildProgressGate(ctx, childID)
+	if err != nil {
+		log.Warn().Err(err).Str("child_id", childID).Str("course_id", courseID).Msg("autoCompleteCourse: gate lookup failed")
+		return
+	}
+	if !gate.DigitalPermitTestCompletedAt.Valid {
+		return
+	}
+
+	courseUnlock, err := server.store.GetChildCourseUnlockByCourse(ctx, db.GetChildCourseUnlockByCourseParams{
+		ChildID:  childID,
+		CourseID: courseID,
+	})
+	if err != nil {
+		if !errors.Is(err, pgx.ErrNoRows) {
+			log.Warn().Err(err).Str("child_id", childID).Str("course_id", courseID).Msg("autoCompleteCourse: course unlock lookup failed")
+		}
+		return
+	}
+	if courseUnlock.Status == db.CourseStatusCompleted || courseUnlock.Status == db.CourseStatusLocked {
+		return
+	}
+
+	courseData, err := server.fetchExternalCourseData(nil, courseID)
+	if err != nil {
+		log.Warn().Err(err).Str("child_id", childID).Str("course_id", courseID).Msg("autoCompleteCourse: failed to fetch course data")
+		return
+	}
+	for _, mod := range courseData.Modules {
+		progress, err := server.store.GetChildModuleProgress(ctx, db.GetChildModuleProgressParams{
+			ChildID:  childID,
+			ModuleID: mod.DocumentID,
+			CourseID: courseID,
+		})
+		if err != nil || !progress.IsCompleted {
+			return
+		}
+	}
+
+	_, err = server.store.UpdateChildCourseUnlockStatus(ctx, db.UpdateChildCourseUnlockStatusParams{
+		ChildID:  childID,
+		CourseID: courseID,
+		Status:   db.CourseStatusCompleted,
+	})
+	if err != nil {
+		log.Warn().Err(err).Str("child_id", childID).Str("course_id", courseID).Msg("autoCompleteCourse: failed to mark course completed")
+		return
+	}
+
+	newlyEligible, err := server.recalculateUnlockSlots(ctx, childID)
+	if err != nil {
+		log.Warn().Err(err).Str("child_id", childID).Str("course_id", courseID).Msg("autoCompleteCourse: recalculate unlock slots failed")
+	}
+
+	nextLocked, err := server.store.GetFirstLockedCourseForChild(ctx, childID)
+	if err == nil {
+		_, _ = server.store.UpdateChildCourseUnlockStatus(ctx, db.UpdateChildCourseUnlockStatusParams{
+			ChildID:  childID,
+			CourseID: nextLocked.CourseID,
+			Status:   db.CourseStatusUnlocked,
+		})
+	}
+
+	completedMeta, _ := json.Marshal(map[string]string{"course_id": courseID, "triggered_by": "auto_module_completion"})
+	_ = server.store.InsertUnlockAuditEvent(ctx, db.InsertUnlockAuditEventParams{
+		ChildID:   childID,
+		EventType: db.UnlockEventCourseCompleted,
+		Metadata:  json.RawMessage(completedMeta),
+	})
+	for _, app := range newlyEligible {
+		slotMeta, _ := json.Marshal(map[string]interface{}{"social_media_id": app.SocialMediaID, "triggered_by": "course_completed", "course_id": courseID})
+		_ = server.store.InsertUnlockAuditEvent(ctx, db.InsertUnlockAuditEventParams{
+			ChildID:   childID,
+			EventType: db.UnlockEventSocialSlotEligible,
+			Metadata:  json.RawMessage(slotMeta),
+		})
+	}
+
+	if len(newlyEligible) > 0 {
+		parentUID, childName, ok := server.lookupParentForChild(ctx, childID)
+		if ok && server.notificationService != nil {
+			_ = server.notificationService.CreateAndSend(
+				ctx,
+				parentUID,
+				db.NotificationRecipientTypeParent,
+				fmt.Sprintf("%s earned a new app slot!", childName),
+				fmt.Sprintf("%s completed a course and can now unlock a social app. Approve it now.", childName),
+			)
+		}
+	}
+}
+
 // ─── completeCourse ──────────────────────────────────────────────────────────
 // POST /v1/child/courses/:course_id/complete
 
@@ -240,16 +343,18 @@ func (server *Server) completeCourse(ctx *gin.Context) {
 
 	bgCtx := context.Background()
 
-	// Seed on first call
+	// Seed on first call (non-fatal — child may already be seeded from DPT completion)
 	if err := server.ensureUnlockSystemSeeded(bgCtx, childID); err != nil {
-		log.Error().Err(err).Str("child_id", childID).Msg("completeCourse: seed failed")
-		ctx.JSON(http.StatusInternalServerError, errorResponse(err))
-		return
+		log.Warn().Err(err).Str("child_id", childID).Msg("completeCourse: seed failed (continuing with existing DB state)")
 	}
 
 	// Ensure DPT is completed before any course can be completed
 	gate, err := server.store.GetChildProgressGate(bgCtx, childID)
 	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			ctx.JSON(http.StatusForbidden, gin.H{"error": "digital permit test must be completed before completing courses"})
+			return
+		}
 		ctx.JSON(http.StatusInternalServerError, errorResponse(err))
 		return
 	}
@@ -290,6 +395,7 @@ func (server *Server) completeCourse(ctx *gin.Context) {
 		progress, err := server.store.GetChildModuleProgress(bgCtx, db.GetChildModuleProgressParams{
 			ChildID:  childID,
 			ModuleID: mod.DocumentID,
+			CourseID: courseID,
 		})
 		if err != nil || !progress.IsCompleted {
 			ctx.JSON(http.StatusBadRequest, gin.H{

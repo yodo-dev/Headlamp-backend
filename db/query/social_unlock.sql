@@ -34,8 +34,8 @@ ON CONFLICT (child_id, course_id) DO NOTHING;
 -- name: UpdateChildCourseUnlockStatus :one
 UPDATE child_course_unlock SET
   status       = $3,
-  unlocked_at  = CASE WHEN $3 = 'UNLOCKED'   AND unlocked_at  IS NULL THEN NOW() ELSE unlocked_at  END,
-  completed_at = CASE WHEN $3 = 'COMPLETED'  AND completed_at IS NULL THEN NOW() ELSE completed_at END,
+  unlocked_at  = CASE WHEN $3::varchar = 'UNLOCKED'   AND unlocked_at  IS NULL THEN NOW() ELSE unlocked_at  END,
+  completed_at = CASE WHEN $3::varchar = 'COMPLETED'  AND completed_at IS NULL THEN NOW() ELSE completed_at END,
   updated_at   = NOW()
 WHERE child_id = $1 AND course_id = $2
 RETURNING *;

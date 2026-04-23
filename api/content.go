@@ -21,6 +21,7 @@ import (
 	"github.com/rs/zerolog/log"
 
 	db "github.com/The-You-School-HeadLamp/headlamp_backend/db/sqlc"
+	"github.com/The-You-School-HeadLamp/headlamp_backend/token"
 	"github.com/The-You-School-HeadLamp/headlamp_backend/util"
 )
 
@@ -457,6 +458,253 @@ func (server *Server) getMyModule(ctx *gin.Context) {
 	ctx.JSON(http.StatusOK, gin.H{"module": clean})
 }
 
+// GET /v1/child/course/:course_id/module/:module_id/quiz/:quiz_id
+func (server *Server) getMyQuiz(ctx *gin.Context) {
+	child := ctx.MustGet(authorizationPayloadKey).(db.Child)
+	var req struct {
+		CourseID string `uri:"course_id" binding:"required"`
+		ModuleID string `uri:"module_id" binding:"required"`
+		QuizID   string `uri:"quiz_id" binding:"required"`
+	}
+	if !bindAndValidateUri(ctx, &req) {
+		return
+	}
+
+	quizData, err := server.fetchExternalQuizData(ctx, req.QuizID)
+	if err != nil {
+		return
+	}
+
+	cleanQuiz := CleanQuiz{
+		ID:                            quizData.DocumentID,
+		Title:                         quizData.Title,
+		Format:                        quizData.Format,
+		PassingScore:                  quizData.Passing,
+		EstimatedCompletionTimeInMins: quizData.EstimatedCompletionTimeInMins,
+	}
+	for _, q := range quizData.Questions {
+		cq := CleanQuestion{
+			ID:           q.DocumentID,
+			Prompt:       q.Prompt,
+			QuestionType: q.QType,
+			Explanation:  q.Explanation,
+		}
+		for _, ao := range q.AnswerOptions {
+			cq.AnswerOptions = append(cq.AnswerOptions, CleanAnswerOption{
+				ID:        ao.DocumentID,
+				Text:      ao.Text,
+				IsCorrect: ao.IsCorrect,
+			})
+		}
+		cleanQuiz.Questions = append(cleanQuiz.Questions, cq)
+	}
+
+	attempts, err := server.store.GetChildQuizAttempts(ctx, db.GetChildQuizAttemptsParams{
+		ChildID:        child.ID,
+		CourseID:       req.CourseID,
+		ModuleID:       req.ModuleID,
+		ExternalQuizID: req.QuizID,
+	})
+	if err != nil && !errors.Is(err, sql.ErrNoRows) {
+		ctx.JSON(http.StatusInternalServerError, errorResponse(err))
+		return
+	}
+
+	var lastAttemptScore float64
+	var lastAttemptPassed bool
+	if len(attempts) > 0 {
+		lastAttemptPassed = attempts[0].Passed
+		if attempts[0].Score.Valid {
+			if v, err2 := attempts[0].Score.Float64Value(); err2 == nil {
+				lastAttemptScore = v.Float64
+			}
+		}
+	}
+
+	ctx.JSON(http.StatusOK, gin.H{
+		"attempts_count":      len(attempts),
+		"last_attempt_score":  lastAttemptScore,
+		"last_attempt_passed": lastAttemptPassed,
+		"passing_score":       cleanQuiz.PassingScore,
+		"attempts":            attempts,
+		"quiz":                cleanQuiz,
+	})
+}
+
+// POST /v1/child/course/:course_id/module/:module_id/quiz/:quiz_id/submit
+func (server *Server) submitMyQuizAnswers(ctx *gin.Context) {
+	child := ctx.MustGet(authorizationPayloadKey).(db.Child)
+	var req SubmitQuizAnswersRequest
+	var uri struct {
+		CourseID string `uri:"course_id"`
+		ModuleID string `uri:"module_id"`
+		QuizID   string `uri:"quiz_id" binding:"required"`
+	}
+
+	if err := ctx.ShouldBindJSON(&req); err != nil {
+		ctx.JSON(http.StatusBadRequest, errorResponse(err))
+		return
+	}
+	if err := ctx.ShouldBindUri(&uri); err != nil {
+		ctx.JSON(http.StatusBadRequest, errorResponse(err))
+		return
+	}
+
+	if uri.ModuleID != "" {
+		moduleData, err := server.fetchExternalModuleData(ctx, uri.ModuleID)
+		if err != nil {
+			return
+		}
+		if moduleData.Quiz == nil || moduleData.Quiz.DocumentID != uri.QuizID {
+			ctx.JSON(http.StatusBadRequest, gin.H{"error": "quiz does not belong to the specified module"})
+			return
+		}
+	}
+
+	quizData, err := server.fetchExternalQuizData(ctx, uri.QuizID)
+	if err != nil {
+		return
+	}
+
+	questionsMap := make(map[string]extQuestion)
+	for _, q := range quizData.Questions {
+		questionsMap[q.DocumentID] = q
+	}
+
+	attempts, err := server.store.GetChildQuizAttempts(ctx, db.GetChildQuizAttemptsParams{
+		ChildID:        child.ID,
+		CourseID:       uri.CourseID,
+		ModuleID:       uri.ModuleID,
+		ExternalQuizID: uri.QuizID,
+	})
+	if err != nil && !errors.Is(err, sql.ErrNoRows) {
+		ctx.JSON(http.StatusInternalServerError, errorResponse(err))
+		return
+	}
+
+	var alreadyPassed bool
+	for _, attempt := range attempts {
+		if attempt.Passed {
+			alreadyPassed = true
+			break
+		}
+	}
+
+	results := make([]QuizSubmissionResult, 0, len(req.Answers))
+	var answerParamsForTx []db.QuizAnswerParams
+
+	for _, answer := range req.Answers {
+		targetQuestion, ok := questionsMap[answer.QuestionID]
+		if !ok {
+			results = append(results, QuizSubmissionResult{QuestionID: answer.QuestionID, Status: "question_not_found"})
+			continue
+		}
+
+		correctOptionIDs := []string{}
+		correctOptionsSet := make(map[string]struct{})
+		for _, opt := range targetQuestion.AnswerOptions {
+			if opt.IsCorrect {
+				correctOptionIDs = append(correctOptionIDs, opt.DocumentID)
+				correctOptionsSet[opt.DocumentID] = struct{}{}
+			}
+		}
+
+		var correctnessStatus string
+		var isCorrectForTx bool
+		var scoreForTx float64
+		submittedCorrectOptions := []string{}
+
+		if targetQuestion.QType == "multiple-choice" && len(correctOptionIDs) > 0 {
+			correctlySelectedCount := 0
+			for _, submittedOptID := range answer.SelectedOptionIds {
+				if _, ok := correctOptionsSet[submittedOptID]; ok {
+					correctlySelectedCount++
+					submittedCorrectOptions = append(submittedCorrectOptions, submittedOptID)
+				}
+			}
+			if len(correctOptionIDs) > 0 {
+				scoreForTx = (float64(correctlySelectedCount) / float64(len(correctOptionIDs))) * 100
+			}
+			if correctlySelectedCount == len(correctOptionIDs) && len(answer.SelectedOptionIds) == len(correctOptionIDs) {
+				correctnessStatus = "true"
+				isCorrectForTx = true
+			} else if correctlySelectedCount > 0 {
+				correctnessStatus = "partial"
+			} else {
+				correctnessStatus = "false"
+			}
+		} else {
+			if len(answer.SelectedOptionIds) == 1 && len(correctOptionIDs) == 1 && answer.SelectedOptionIds[0] == correctOptionIDs[0] {
+				isCorrectForTx = true
+				correctnessStatus = "true"
+				scoreForTx = 100
+				submittedCorrectOptions = correctOptionIDs
+			} else {
+				correctnessStatus = "false"
+			}
+		}
+
+		result := QuizSubmissionResult{
+			QuestionID:              answer.QuestionID,
+			IsCorrect:               correctnessStatus,
+			SubmittedCorrectOptions: submittedCorrectOptions,
+		}
+		if alreadyPassed {
+			result.Status = "already_passed"
+		}
+		results = append(results, result)
+
+		if !alreadyPassed {
+			answerParamsForTx = append(answerParamsForTx, db.QuizAnswerParams{
+				QuestionID:        answer.QuestionID,
+				SelectedOptionIds: answer.SelectedOptionIds,
+				IsCorrect:         isCorrectForTx,
+				Score:             scoreForTx,
+			})
+		}
+	}
+
+	if !alreadyPassed && len(answerParamsForTx) > 0 {
+		txParams := db.SubmitQuizAnswersTxParams{
+			ChildID:              child.ID,
+			CourseID:             uri.CourseID,
+			ModuleID:             uri.ModuleID,
+			ExternalQuizID:       uri.QuizID,
+			Answers:              answerParamsForTx,
+			Context:              util.ContextModule,
+			ContextRef:           uri.ModuleID,
+			TotalQuestionsInQuiz: len(quizData.Questions),
+			PassingScore:         quizData.Passing,
+		}
+		txResult, err := server.store.SubmitQuizAnswersTx(ctx, txParams)
+		if err != nil {
+			log.Error().Err(err).Msg("failed to submit quiz answers transaction")
+			ctx.JSON(http.StatusInternalServerError, errorResponse(err))
+			return
+		}
+		if txResult.Attempt.Passed {
+			go server.sendParentNotification(
+				txResult.Child, txResult.Parent,
+				"Quiz Completed!",
+				fmt.Sprintf("%s just passed the '%s' quiz!", txResult.Child.FirstName, quizData.Title),
+			)
+		}
+		if txResult.ModuleUpdated && uri.ModuleID != "" {
+			moduleData, err := server.fetchExternalModuleData(ctx, uri.ModuleID)
+			if err == nil {
+				go server.sendParentNotification(
+					txResult.Child, txResult.Parent,
+					"Module Completed!",
+					fmt.Sprintf("%s just completed the '%s' module!", txResult.Child.FirstName, moduleData.Title),
+				)
+			}
+			go server.tryAutoCompleteCourseIfEligible(context.Background(), child.ID, uri.CourseID)
+		}
+	}
+
+	ctx.JSON(http.StatusOK, gin.H{"results": results})
+}
+
 func (server *Server) getChildCourseModule(ctx *gin.Context) {
 	var req getChildCourseModuleRequest
 	if !bindAndValidateUri(ctx, &req) {
@@ -724,39 +972,33 @@ func (server *Server) submitQuizAnswers(ctx *gin.Context) {
 			TotalQuestionsInQuiz: len(quizData.Questions),
 			PassingScore:         quizData.Passing,
 		}
-		_, err := server.store.SubmitQuizAnswersTx(ctx, txParams)
+		txResult, err := server.store.SubmitQuizAnswersTx(ctx, txParams)
 		if err != nil {
-			txResult, err := server.store.SubmitQuizAnswersTx(ctx, txParams)
-			if err != nil {
-				log.Ctx(ctx).Error().Err(err).Msg("failed to submit quiz answers transaction")
-				ctx.JSON(http.StatusInternalServerError, errorResponse(err))
-				return
-			}
+			log.Ctx(ctx).Error().Err(err).Msg("failed to submit quiz answers transaction")
+			ctx.JSON(http.StatusInternalServerError, errorResponse(err))
+			return
+		}
 
-			// If the child passed the quiz, send a notification
-			if txResult.Attempt.Passed {
-				quizTitle := quizData.Title // Assuming quizData is available
+		if txResult.Attempt.Passed {
+			go server.sendParentNotification(
+				txResult.Child,
+				txResult.Parent,
+				"Quiz Completed!",
+				fmt.Sprintf("%s just passed the '%s' quiz!", txResult.Child.FirstName, quizData.Title),
+			)
+		}
+
+		if txResult.ModuleUpdated {
+			moduleData, err := server.fetchExternalModuleData(ctx, uri.ModuleID)
+			if err == nil {
 				go server.sendParentNotification(
 					txResult.Child,
 					txResult.Parent,
-					"Quiz Completed!",
-					fmt.Sprintf("%s just passed the '%s' quiz!", txResult.Child.FirstName, quizTitle),
+					"Module Completed!",
+					fmt.Sprintf("%s just completed the '%s' module!", txResult.Child.FirstName, moduleData.Title),
 				)
 			}
-
-			// If the module was completed, send a notification
-			if txResult.ModuleUpdated {
-				// We need to fetch the module title
-				moduleData, err := server.fetchExternalModuleData(ctx, uri.ModuleID)
-				if err == nil {
-					go server.sendParentNotification(
-						txResult.Child,
-						txResult.Parent,
-						"Module Completed!",
-						fmt.Sprintf("%s just completed the '%s' module!", txResult.Child.FirstName, moduleData.Title),
-					)
-				}
-			}
+			go server.tryAutoCompleteCourseIfEligible(context.Background(), uri.ID, uri.CourseID)
 		}
 	}
 
@@ -1176,7 +1418,7 @@ type CleanCourseListItem struct {
 // getAllCourses fetches all available courses from the external content API.
 // GET /v1/parent/child/:id/courses/stats
 type getCourseStatsForChildRequest struct {
-	ID string `uri:"id" binding:"required"`
+	ID string `uri:"id" binding:"required,uuid"`
 }
 
 type CourseStatsResponse struct {
@@ -1192,15 +1434,10 @@ type courseDetailResult struct {
 	err        error
 }
 
-func (server *Server) getCoursesStatsForChild(ctx *gin.Context) {
-	var req getCourseStatsForChildRequest
-	if !bindAndValidateUri(ctx, &req) {
-		return
-	}
-
+func (server *Server) buildCourseStatsResponse(ctx *gin.Context, childID string) (*CourseStatsResponse, error) {
 	allCourses, err := server.fetchAllExternalCourses(ctx)
 	if err != nil {
-		return
+		return nil, err
 	}
 
 	var wg sync.WaitGroup
@@ -1230,6 +1467,7 @@ func (server *Server) getCoursesStatsForChild(ctx *gin.Context) {
 		courseData := result.courseData
 		totalModules += len(courseData.Modules)
 		moduleIDs := make([]string, len(courseData.Modules))
+		completedModuleIDs := make(map[string]struct{}, len(courseData.Modules))
 
 		for i, module := range courseData.Modules {
 			moduleIDs[i] = module.DocumentID
@@ -1238,26 +1476,38 @@ func (server *Server) getCoursesStatsForChild(ctx *gin.Context) {
 				totalTimeTakenMins += float64(module.Quiz.EstimatedCompletionTimeInMins)
 			}
 			if module.Video != nil {
-				// Assuming video size is in MB, converting to time in minutes (e.g., 10MB ~ 1 min)
 				totalTimeTakenMins += module.Video.Size / 10
 			}
 		}
 
 		if len(moduleIDs) > 0 {
 			progress, err := server.store.GetChildModuleProgressForCourse(ctx, db.GetChildModuleProgressForCourseParams{
-				ChildID:   req.ID,
+				ChildID:   childID,
 				CourseID:  courseData.DocumentID,
 				ModuleIds: moduleIDs,
 			})
 			if err != nil && err != sql.ErrNoRows {
-				ctx.JSON(http.StatusInternalServerError, errorResponse(err))
-				return
+				return nil, err
 			}
 			for _, p := range progress {
 				if p.IsCompleted {
-					completedModules++
+					completedModuleIDs[p.ModuleID] = struct{}{}
 				}
 			}
+
+			passedModuleIDs, err := server.store.GetPassedModuleIDsForCourse(ctx, db.GetPassedModuleIDsForCourseParams{
+				ChildID:   childID,
+				CourseID:  courseData.DocumentID,
+				ModuleIDs: moduleIDs,
+			})
+			if err != nil {
+				return nil, err
+			}
+			for _, moduleID := range passedModuleIDs {
+				completedModuleIDs[moduleID] = struct{}{}
+			}
+
+			completedModules += len(completedModuleIDs)
 		}
 	}
 
@@ -1266,18 +1516,52 @@ func (server *Server) getCoursesStatsForChild(ctx *gin.Context) {
 		moduleCompletionRate = math.Round((float64(completedModules)/float64(totalModules))*100*100) / 100
 	}
 
-	isStarted, err := server.store.CheckQuizAttemptExistsForChild(ctx, req.ID)
+	isStarted, err := server.store.CheckQuizAttemptExistsForChild(ctx, childID)
 	if err != nil {
-		ctx.JSON(http.StatusInternalServerError, errorResponse(err))
-		return
+		return nil, err
+	}
+	if !isStarted {
+		isStarted, err = server.store.CheckChildModuleProgressExists(ctx, childID)
+		if err != nil {
+			return nil, err
+		}
 	}
 
-	stats := CourseStatsResponse{
+	stats := &CourseStatsResponse{
 		EstimatedTotalTimeTakenInMins: int64(totalTimeTakenMins),
 		TotalCourses:                  len(allCourses),
 		TotalQuizzes:                  totalQuizzes,
 		ModuleCompletionRate:          moduleCompletionRate,
 		IsStarted:                     isStarted,
+	}
+
+	return stats, nil
+}
+
+func (server *Server) getCoursesStatsForChild(ctx *gin.Context) {
+	var req getCourseStatsForChildRequest
+	if !bindAndValidateUri(ctx, &req) {
+		return
+	}
+
+	authPayload := ctx.MustGet(authorizationPayloadKey).(*token.Payload)
+	child, err := server.store.GetChildForParent(ctx, db.GetChildForParentParams{
+		ParentID: authPayload.UserID,
+		ID:       req.ID,
+	})
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			ctx.JSON(http.StatusForbidden, errorResponse(fmt.Errorf("you do not have access to this child")))
+			return
+		}
+		ctx.JSON(http.StatusInternalServerError, errorResponse(err))
+		return
+	}
+
+	stats, err := server.buildCourseStatsResponse(ctx, child.ID)
+	if err != nil {
+		ctx.JSON(http.StatusInternalServerError, errorResponse(err))
+		return
 	}
 
 	ctx.JSON(http.StatusOK, stats)
@@ -1767,86 +2051,11 @@ func (server *Server) getMyCoursesForChild(ctx *gin.Context) {
 // Returns aggregate course stats for the authenticated child.
 func (server *Server) getMyCoursesStatsForChild(ctx *gin.Context) {
 	child := ctx.MustGet(authorizationPayloadKey).(db.Child)
-	childID := child.ID
-
-	allCourses, err := server.fetchAllExternalCourses(ctx)
-	if err != nil {
-		return
-	}
-
-	var wg sync.WaitGroup
-	resultsChan := make(chan courseDetailResult, len(allCourses))
-
-	for _, courseItem := range allCourses {
-		wg.Add(1)
-		go func(courseID string) {
-			defer wg.Done()
-			courseData, err := server.fetchExternalCourseData(ctx, courseID)
-			resultsChan <- courseDetailResult{courseData: courseData, err: err}
-		}(courseItem.DocumentID)
-	}
-
-	wg.Wait()
-	close(resultsChan)
-
-	var totalTimeTakenMins float64
-	var totalQuizzes, totalModules, completedModules int
-
-	for result := range resultsChan {
-		if result.err != nil {
-			log.Warn().Err(result.err).Msg("failed to fetch course details for stats")
-			continue
-		}
-
-		courseData := result.courseData
-		totalModules += len(courseData.Modules)
-		moduleIDs := make([]string, len(courseData.Modules))
-
-		for i, module := range courseData.Modules {
-			moduleIDs[i] = module.DocumentID
-			if module.Quiz != nil {
-				totalQuizzes++
-				totalTimeTakenMins += float64(module.Quiz.EstimatedCompletionTimeInMins)
-			}
-			if module.Video != nil {
-				totalTimeTakenMins += module.Video.Size / 10
-			}
-		}
-
-		if len(moduleIDs) > 0 {
-			progress, err := server.store.GetChildModuleProgressForCourse(ctx, db.GetChildModuleProgressForCourseParams{
-				ChildID:   childID,
-				CourseID:  courseData.DocumentID,
-				ModuleIds: moduleIDs,
-			})
-			if err != nil && err != sql.ErrNoRows {
-				ctx.JSON(http.StatusInternalServerError, errorResponse(err))
-				return
-			}
-			for _, p := range progress {
-				if p.IsCompleted {
-					completedModules++
-				}
-			}
-		}
-	}
-
-	var moduleCompletionRate float64
-	if totalModules > 0 {
-		moduleCompletionRate = math.Round((float64(completedModules)/float64(totalModules))*100*100) / 100
-	}
-
-	isStarted, err := server.store.CheckQuizAttemptExistsForChild(ctx, childID)
+	stats, err := server.buildCourseStatsResponse(ctx, child.ID)
 	if err != nil {
 		ctx.JSON(http.StatusInternalServerError, errorResponse(err))
 		return
 	}
 
-	ctx.JSON(http.StatusOK, CourseStatsResponse{
-		EstimatedTotalTimeTakenInMins: int64(totalTimeTakenMins),
-		TotalCourses:                  len(allCourses),
-		TotalQuizzes:                  totalQuizzes,
-		ModuleCompletionRate:          moduleCompletionRate,
-		IsStarted:                     isStarted,
-	})
+	ctx.JSON(http.StatusOK, stats)
 }
