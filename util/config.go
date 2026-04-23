@@ -61,6 +61,12 @@ type Config struct {
 	FromName     string `mapstructure:"FROM_NAME"`
 	AdminEmail   string `mapstructure:"ADMIN_EMAIL"`
 	SupportEmail string `mapstructure:"SUPPORT_EMAIL"`
+
+	// Public-facing base URL of this server (used to build asset URLs in emails, e.g. logo)
+	AppBaseURL string `mapstructure:"APP_BASE_URL"`
+
+	// Publicly accessible URL of the brand logo image used in email templates
+	LogoURL string `mapstructure:"LOGO_URL"`
 }
 
 // LoadConfig reads configuration from file or environment variables.

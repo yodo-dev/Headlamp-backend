@@ -76,7 +76,7 @@ func NewServer(config util.Config, store db.Store, tokenMaker token.Maker, gptCl
 	if smtpUser == "" {
 		smtpUser = config.FromEmail // fall back to FROM_EMAIL as the auth username
 	}
-	emailSvc := util.NewEmailService(smtpHost, smtpPort, smtpUser, config.SMTPPass, config.FromEmail, config.FromName, "templates")
+	emailSvc := util.NewEmailService(smtpHost, smtpPort, smtpUser, config.SMTPPass, config.FromEmail, config.FromName, "templates", config.AppBaseURL, config.LogoURL)
 
 	server := &Server{
 		config:                 config,
@@ -122,6 +122,9 @@ func NewServer(config util.Config, store db.Store, tokenMaker token.Maker, gptCl
 
 func (server *Server) setupRouter() {
 	router := gin.Default()
+
+	// Serve static assets (e.g. email logo images)
+	router.Static("/static", "templates/logo")
 
 	// Auth routes
 	v1 := router.Group("/v1")

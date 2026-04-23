@@ -20,12 +20,15 @@ type EmailService struct {
 	password    string
 	from        string
 	fromName    string
-	templateDir string // absolute path to the templates/ directory
+	templateDir string // path to the templates/ directory
+	logoURL     string // publicly accessible URL for the logo image
 }
 
 // NewEmailService constructs an EmailService from config values.
-// templateDir should be the absolute path to the templates/ directory.
-func NewEmailService(host string, port int, username, password, from, fromName, templateDir string) *EmailService {
+// templateDir should be the path to the templates/ directory.
+// logoURL should be a publicly accessible URL to the brand logo image (e.g. from LOGO_URL env var).
+func NewEmailService(host string, port int, username, password, from, fromName, templateDir, appBaseURL, logoURL string) *EmailService {
+	_ = strings.TrimRight(appBaseURL, "/") // reserved for future use
 	return &EmailService{
 		host:        host,
 		port:        fmt.Sprintf("%d", port),
@@ -34,6 +37,7 @@ func NewEmailService(host string, port int, username, password, from, fromName, 
 		from:        from,
 		fromName:    fromName,
 		templateDir: templateDir,
+		logoURL:     logoURL,
 	}
 }
 
@@ -41,17 +45,20 @@ func NewEmailService(host string, port int, username, password, from, fromName, 
 
 type welcomeEmailData struct {
 	FirstName string
+	LogoURL   string
 	Year      int
 }
 
 type otpEmailData struct {
-	OTP  string
-	Year int
+	OTP     string
+	LogoURL string
+	Year    int
 }
 
 type passwordResetEmailData struct {
 	Email     string
 	ChangedAt string
+	LogoURL   string
 	Year      int
 }
 
@@ -61,6 +68,7 @@ type passwordResetEmailData struct {
 func (s *EmailService) SendWelcomeEmail(toEmail, firstName string) error {
 	body, err := s.renderTemplate("headlamp-welcome.html", welcomeEmailData{
 		FirstName: firstName,
+		LogoURL:   s.logoURL,
 		Year:      time.Now().Year(),
 	})
 	if err != nil {
@@ -72,8 +80,9 @@ func (s *EmailService) SendWelcomeEmail(toEmail, firstName string) error {
 // SendForgotPasswordEmail sends the forgot-password OTP email.
 func (s *EmailService) SendForgotPasswordEmail(toEmail, otp string) error {
 	body, err := s.renderTemplate("headlamp-forgot-password.html", otpEmailData{
-		OTP:  otp,
-		Year: time.Now().Year(),
+		OTP:     otp,
+		LogoURL: s.logoURL,
+		Year:    time.Now().Year(),
 	})
 	if err != nil {
 		return fmt.Errorf("forgot-password email render: %w", err)
@@ -84,8 +93,9 @@ func (s *EmailService) SendForgotPasswordEmail(toEmail, otp string) error {
 // SendResendOTPEmail sends a fresh OTP via the resend template.
 func (s *EmailService) SendResendOTPEmail(toEmail, otp string) error {
 	body, err := s.renderTemplate("headlamp-otp-resend.html", otpEmailData{
-		OTP:  otp,
-		Year: time.Now().Year(),
+		OTP:     otp,
+		LogoURL: s.logoURL,
+		Year:    time.Now().Year(),
 	})
 	if err != nil {
 		return fmt.Errorf("resend-otp email render: %w", err)
@@ -99,6 +109,7 @@ func (s *EmailService) SendPasswordResetEmail(toEmail, changedAt string) error {
 	body, err := s.renderTemplate("headlamp-password-reset.html", passwordResetEmailData{
 		Email:     toEmail,
 		ChangedAt: changedAt,
+		LogoURL:   s.logoURL,
 		Year:      time.Now().Year(),
 	})
 	if err != nil {
