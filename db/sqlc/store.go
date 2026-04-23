@@ -7,6 +7,7 @@ import (
 
 	_ "github.com/golang/mock/mockgen/model"
 
+	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
@@ -43,6 +44,15 @@ type Store interface {
 	GetReflectionAggregateForChild(ctx context.Context, arg GetInsightAggregateParams) (ReflectionAggregate, error)
 	GetRecentReflectionResponsesForChild(ctx context.Context, arg GetInsightAggregateParams) ([]ReflectionResponseRow, error)
 	GetQuizAggregateForChild(ctx context.Context, arg GetInsightAggregateParams) (QuizAggregate, error)
+
+	// ── Password Reset OTP ────────────────────────────────────────────────────
+	CreatePasswordResetOTP(ctx context.Context, arg CreatePasswordResetOTPParams) (PasswordResetOtp, error)
+	GetLatestValidOTPByEmail(ctx context.Context, email string) (PasswordResetOtp, error)
+	GetOTPByResetToken(ctx context.Context, resetToken uuid.UUID) (PasswordResetOtp, error)
+	MarkOTPVerified(ctx context.Context, id uuid.UUID) (PasswordResetOtp, error)
+	MarkOTPUsed(ctx context.Context, id uuid.UUID) error
+	InvalidateOTPsByEmail(ctx context.Context, email string) error
+	UpdateParentPassword(ctx context.Context, hashedPassword, parentID string) error
 }
 
 // QuizAnswer defines the structure for a single answer submission.

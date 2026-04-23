@@ -22,7 +22,7 @@ INSERT INTO children (
     profile_image_url
 ) VALUES (
     $1, $2, $3, $4, $5, $6, $7
-) RETURNING id, family_id, first_name, surname, age, gender, profile_image_url, created_at, updated_at, push_notifications_enabled
+) RETURNING id, family_id, first_name, surname, age, gender, profile_image_url, created_at, updated_at, push_notifications_enabled, deleted_at
 `
 
 type CreateChildParams struct {
@@ -57,6 +57,7 @@ func (q *Queries) CreateChild(ctx context.Context, arg CreateChildParams) (Child
 		&i.CreatedAt,
 		&i.UpdatedAt,
 		&i.PushNotificationsEnabled,
+		&i.DeletedAt,
 	)
 	return i, err
 }
@@ -72,8 +73,8 @@ func (q *Queries) DeleteChild(ctx context.Context, id string) error {
 }
 
 const getChild = `-- name: GetChild :one
-SELECT id, family_id, first_name, surname, age, gender, profile_image_url, created_at, updated_at, push_notifications_enabled FROM children
-WHERE id = $1 LIMIT 1
+SELECT id, family_id, first_name, surname, age, gender, profile_image_url, created_at, updated_at, push_notifications_enabled, deleted_at FROM children
+WHERE id = $1 AND deleted_at IS NULL LIMIT 1
 `
 
 func (q *Queries) GetChild(ctx context.Context, id string) (Child, error) {
@@ -90,13 +91,14 @@ func (q *Queries) GetChild(ctx context.Context, id string) (Child, error) {
 		&i.CreatedAt,
 		&i.UpdatedAt,
 		&i.PushNotificationsEnabled,
+		&i.DeletedAt,
 	)
 	return i, err
 }
 
 const getChildrenByFamilyID = `-- name: GetChildrenByFamilyID :many
-SELECT id, family_id, first_name, surname, age, gender, profile_image_url, created_at, updated_at, push_notifications_enabled FROM children
-WHERE family_id = $1
+SELECT id, family_id, first_name, surname, age, gender, profile_image_url, created_at, updated_at, push_notifications_enabled, deleted_at FROM children
+WHERE family_id = $1 AND deleted_at IS NULL
 ORDER BY created_at
 `
 
@@ -120,6 +122,7 @@ func (q *Queries) GetChildrenByFamilyID(ctx context.Context, familyID string) ([
 			&i.CreatedAt,
 			&i.UpdatedAt,
 			&i.PushNotificationsEnabled,
+			&i.DeletedAt,
 		); err != nil {
 			return nil, err
 		}
@@ -129,4 +132,20 @@ func (q *Queries) GetChildrenByFamilyID(ctx context.Context, familyID string) ([
 		return nil, err
 	}
 	return items, nil
+}
+
+const softDeleteChild = `-- name: SoftDeleteChild :exec
+UPDATE children
+SET deleted_at = NOW()
+WHERE id = $1 AND family_id = $2 AND deleted_at IS NULL
+`
+
+type SoftDeleteChildParams struct {
+	ID       string `json:"id"`
+	FamilyID string `json:"family_id"`
+}
+
+func (q *Queries) SoftDeleteChild(ctx context.Context, arg SoftDeleteChildParams) error {
+	_, err := q.db.Exec(ctx, softDeleteChild, arg.ID, arg.FamilyID)
+	return err
 }

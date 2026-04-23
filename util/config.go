@@ -51,6 +51,16 @@ type Config struct {
 
 	// Parent insight scheduler (standard 5-field cron expression)
 	ParentInsightCronSchedule string `mapstructure:"PARENT_INSIGHT_CRON_SCHEDULE"`
+
+	// SMTP – used for transactional emails (e.g. password reset OTP)
+	SMTPHost     string `mapstructure:"SMTP_HOST"`
+	SMTPPort     int    `mapstructure:"SMTP_PORT"`
+	SMTPUser     string `mapstructure:"SMTP_USER"`
+	SMTPPass     string `mapstructure:"SMTP_PASS"`
+	FromEmail    string `mapstructure:"FROM_EMAIL"`
+	FromName     string `mapstructure:"FROM_NAME"`
+	AdminEmail   string `mapstructure:"ADMIN_EMAIL"`
+	SupportEmail string `mapstructure:"SUPPORT_EMAIL"`
 }
 
 // LoadConfig reads configuration from file or environment variables.
@@ -101,6 +111,14 @@ func LoadConfig(path string) (config Config, err error) {
 	viper.BindEnv("REFLECTION_CRON_SCHEDULE")
 	viper.BindEnv("REFLECTION_TEST_MODE")
 	viper.BindEnv("PARENT_INSIGHT_CRON_SCHEDULE")
+	viper.BindEnv("SMTP_HOST")
+	viper.BindEnv("SMTP_PORT")
+	viper.BindEnv("SMTP_USER")
+	viper.BindEnv("SMTP_PASS")
+	viper.BindEnv("FROM_EMAIL")
+	viper.BindEnv("FROM_NAME")
+	viper.BindEnv("ADMIN_EMAIL")
+	viper.BindEnv("SUPPORT_EMAIL")
 
 	err = viper.Unmarshal(&config)
 	fmt.Println(config)

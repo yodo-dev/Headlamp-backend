@@ -716,3 +716,61 @@ func (server *Server) updateParentProfile(ctx *gin.Context) {
 		PushNotificationsEnabled: parent.PushNotificationsEnabled,
 	})
 }
+
+// deleteChild soft-deletes a child that belongs to the authenticated parent's
+// family.  It also deactivates the child's devices and closes open sessions
+// (see DeleteChildTx).
+func (server *Server) deleteChild(ctx *gin.Context) {
+	authPayload, exists := ctx.Get(authorizationPayloadKey)
+	if !exists {
+		ctx.JSON(http.StatusUnauthorized, errorResponse(errors.New("authorization payload not found")))
+		return
+	}
+
+	payload, ok := authPayload.(*token.Payload)
+	if !ok {
+		ctx.JSON(http.StatusInternalServerError, errorResponse(errors.New("invalid payload type in context")))
+		return
+	}
+
+	var uriReq struct {
+		ID string `uri:"id" binding:"required"`
+	}
+	if err := ctx.ShouldBindUri(&uriReq); err != nil {
+		ctx.JSON(http.StatusBadRequest, errorResponse(err))
+		return
+	}
+
+	// Verify the child belongs to the authenticated parent's family.
+	parentRecord, err := server.store.GetParentByParentID(ctx, payload.UserID)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			ctx.JSON(http.StatusNotFound, errorResponse(errors.New("parent not found")))
+			return
+		}
+		ctx.JSON(http.StatusInternalServerError, errorResponse(err))
+		return
+	}
+
+	child, err := server.store.GetChildByIDAndFamilyID(ctx, db.GetChildByIDAndFamilyIDParams{
+		ID:       uriReq.ID,
+		FamilyID: parentRecord.FamilyID,
+	})
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			ctx.JSON(http.StatusNotFound, errorResponse(errors.New("child not found or does not belong to this family")))
+			return
+		}
+		ctx.JSON(http.StatusInternalServerError, errorResponse(err))
+		return
+	}
+
+	if err := server.store.DeleteChildTx(ctx, child.ID); err != nil {
+		log.Error().Err(err).Str("child_id", child.ID).Msg("failed to soft-delete child")
+		ctx.JSON(http.StatusInternalServerError, errorResponse(err))
+		return
+	}
+
+	log.Info().Str("child_id", child.ID).Str("parent_user_id", payload.UserID).Msg("child soft-deleted")
+	ctx.JSON(http.StatusOK, gin.H{"message": "child deleted successfully"})
+}

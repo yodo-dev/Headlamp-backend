@@ -152,6 +152,7 @@ type Querier interface {
 	MarkSessionEnded(ctx context.Context, arg MarkSessionEndedParams) (AppSession, error)
 	MarkSessionReflectionTriggered(ctx context.Context, arg MarkSessionReflectionTriggeredParams) error
 	SetSocialMediaAccess(ctx context.Context, arg SetSocialMediaAccessParams) (AccessibleSocialMedium, error)
+	SoftDeleteChild(ctx context.Context, arg SoftDeleteChildParams) error
 	TimeoutStaleSessions(ctx context.Context) ([]AppSession, error)
 	UpdateChild(ctx context.Context, arg UpdateChildParams) (Child, error)
 	UpdateChildOnboardingStep(ctx context.Context, arg UpdateChildOnboardingStepParams) (ChildOnboardingProgress, error)

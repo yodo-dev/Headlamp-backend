@@ -468,16 +468,17 @@ type AppSession struct {
 }
 
 type Child struct {
-	ID                       string      `json:"id"`
-	FamilyID                 string      `json:"family_id"`
-	FirstName                string      `json:"first_name"`
-	Surname                  string      `json:"surname"`
-	Age                      pgtype.Int4 `json:"age"`
-	Gender                   pgtype.Text `json:"gender"`
-	ProfileImageUrl          pgtype.Text `json:"profile_image_url"`
-	CreatedAt                time.Time   `json:"created_at"`
-	UpdatedAt                time.Time   `json:"updated_at"`
-	PushNotificationsEnabled bool        `json:"push_notifications_enabled"`
+	ID                       string             `json:"id"`
+	FamilyID                 string             `json:"family_id"`
+	FirstName                string             `json:"first_name"`
+	Surname                  string             `json:"surname"`
+	Age                      pgtype.Int4        `json:"age"`
+	Gender                   pgtype.Text        `json:"gender"`
+	ProfileImageUrl          pgtype.Text        `json:"profile_image_url"`
+	CreatedAt                time.Time          `json:"created_at"`
+	UpdatedAt                time.Time          `json:"updated_at"`
+	PushNotificationsEnabled bool               `json:"push_notifications_enabled"`
+	DeletedAt                pgtype.Timestamptz `json:"deleted_at"`
 }
 
 type ChildActivityLog struct {

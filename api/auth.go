@@ -110,6 +110,15 @@ func (server *Server) signUpParent(ctx *gin.Context) {
 
 	server.upsertDeviceIfProvided(ctx, user.Parent.ParentID, ParentUserProfile, req.DeviceID, req.PushToken, req.Provider)
 
+	// Send welcome email asynchronously so it doesn't block the response.
+	go func() {
+		if server.emailService != nil {
+			if err := server.emailService.SendWelcomeEmail(user.Parent.Email, user.Parent.Firstname); err != nil {
+				log.Error().Err(err).Str("parent_id", user.Parent.ParentID).Msg("signUpParent: failed to send welcome email")
+			}
+		}
+	}()
+
 	ctx.JSON(http.StatusOK, signUpParentResponse{
 		AccessToken:          accessToken,
 		AccessTokenExpiresAt: accessPayload.ExpiredAt,

@@ -1,6 +1,6 @@
 -- name: GetChildByIDAndFamilyID :one
 SELECT * FROM children
-WHERE id = $1 AND family_id = $2;
+WHERE id = $1 AND family_id = $2 AND deleted_at IS NULL;
 
 -- name: UpdateChild :one
 UPDATE children

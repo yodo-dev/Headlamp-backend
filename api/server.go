@@ -33,6 +33,13 @@ type Server struct {
 	firebaseAuth      *firebaseAuth.Client
 	firebaseMsg       *firebaseMessaging.Client
 
+	// Email
+	emailService *util.EmailService
+
+	// Rate limiters
+	otpSendLimiter   *util.SlidingWindowRateLimiter // 3 per 15 min per email
+	otpVerifyLimiter *util.SlidingWindowRateLimiter // 5 per 15 min per email
+
 	// Services
 	notificationService    *service.NotificationService
 	reflectionService      *service.ReflectionService
@@ -59,6 +66,18 @@ func NewServer(config util.Config, store db.Store, tokenMaker token.Maker, gptCl
 
 	notificationSvc := service.NewNotificationService(store, fbMsgClient)
 
+	// Build email service from config (SMTP_HOST is optional; if blank, email is disabled)
+	smtpHost := config.SMTPHost
+	smtpPort := config.SMTPPort
+	if smtpPort == 0 {
+		smtpPort = 587 // default STARTTLS port
+	}
+	smtpUser := config.SMTPUser
+	if smtpUser == "" {
+		smtpUser = config.FromEmail // fall back to FROM_EMAIL as the auth username
+	}
+	emailSvc := util.NewEmailService(smtpHost, smtpPort, smtpUser, config.SMTPPass, config.FromEmail, config.FromName, "templates")
+
 	server := &Server{
 		config:                 config,
 		store:                  store,
@@ -68,6 +87,9 @@ func NewServer(config util.Config, store db.Store, tokenMaker token.Maker, gptCl
 		gptClient:              gptClient,
 		firebaseAuth:           fbAuthClient,
 		firebaseMsg:            fbMsgClient,
+		emailService:           emailSvc,
+		otpSendLimiter:         util.NewSlidingWindowRateLimiter(3, 15*time.Minute),
+		otpVerifyLimiter:       util.NewSlidingWindowRateLimiter(5, 15*time.Minute),
 		notificationService:    notificationSvc,
 		reflectionService:      reflectionSvc,
 		reflectionScheduler:    service.NewReflectionScheduler(store, reflectionSvc, notificationSvc, config.ReflectionTestMode),
@@ -111,6 +133,12 @@ func (server *Server) setupRouter() {
 	v1.GET("/auth/parent/oauth/:provider/callback", server.oauthParentCallback)
 	v1.POST("/auth/parent/oauth/:provider/process", server.processOAuthIdToken)
 	v1.POST("/auth/parent/firebase", server.processFirebaseIdToken)
+
+	// Password reset flow (public – no auth required)
+	v1.POST("/auth/parent/forgot-password", server.forgotPassword)
+	v1.POST("/auth/parent/resend-otp", server.resendOTP)
+	v1.POST("/auth/parent/verify-otp", server.verifyOTP)
+	v1.POST("/auth/parent/reset-password", server.resetPassword)
 
 	// Public routes
 	v1.POST("/child/link-code/verify", server.verifyLinkCode)
@@ -174,6 +202,7 @@ func (server *Server) setupRouter() {
 		parentRoutes.GET("/child/all", server.getAllChildren)
 		parentRoutes.GET("/child/:id", server.getParentChild)
 		parentRoutes.PATCH("/child/:id", server.updateChild)
+		parentRoutes.DELETE("/child/:id", server.deleteChild)
 		parentRoutes.GET("/child/:id/link-code", server.generateLinkCode)
 		parentRoutes.GET("/child/:id/course/:course_id", server.getChildCourse)
 		parentRoutes.GET("/child/:id/course/:course_id/module/:module_id", server.getChildCourseModule)

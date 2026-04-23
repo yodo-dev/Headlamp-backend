@@ -1,10 +1,10 @@
 -- name: GetChild :one
 SELECT * FROM children
-WHERE id = $1 LIMIT 1;
+WHERE id = $1 AND deleted_at IS NULL LIMIT 1;
 
 -- name: GetChildrenByFamilyID :many
 SELECT * FROM children
-WHERE family_id = $1
+WHERE family_id = $1 AND deleted_at IS NULL
 ORDER BY created_at;
 
 -- name: CreateChild :one
@@ -23,3 +23,8 @@ INSERT INTO children (
 -- name: DeleteChild :exec
 DELETE FROM children
 WHERE id = $1;
+
+-- name: SoftDeleteChild :exec
+UPDATE children
+SET deleted_at = NOW()
+WHERE id = $1 AND family_id = $2 AND deleted_at IS NULL;

@@ -12,8 +12,8 @@ import (
 )
 
 const getChildByIDAndFamilyID = `-- name: GetChildByIDAndFamilyID :one
-SELECT id, family_id, first_name, surname, age, gender, profile_image_url, created_at, updated_at, push_notifications_enabled FROM children
-WHERE id = $1 AND family_id = $2
+SELECT id, family_id, first_name, surname, age, gender, profile_image_url, created_at, updated_at, push_notifications_enabled, deleted_at FROM children
+WHERE id = $1 AND family_id = $2 AND deleted_at IS NULL
 `
 
 type GetChildByIDAndFamilyIDParams struct {
@@ -35,6 +35,7 @@ func (q *Queries) GetChildByIDAndFamilyID(ctx context.Context, arg GetChildByIDA
 		&i.CreatedAt,
 		&i.UpdatedAt,
 		&i.PushNotificationsEnabled,
+		&i.DeletedAt,
 	)
 	return i, err
 }
@@ -50,7 +51,7 @@ SET
     push_notifications_enabled = COALESCE($6, push_notifications_enabled),
     updated_at = NOW()
 WHERE id = $7
-RETURNING id, family_id, first_name, surname, age, gender, profile_image_url, created_at, updated_at, push_notifications_enabled
+RETURNING id, family_id, first_name, surname, age, gender, profile_image_url, created_at, updated_at, push_notifications_enabled, deleted_at
 `
 
 type UpdateChildParams struct {
@@ -85,6 +86,7 @@ func (q *Queries) UpdateChild(ctx context.Context, arg UpdateChildParams) (Child
 		&i.CreatedAt,
 		&i.UpdatedAt,
 		&i.PushNotificationsEnabled,
+		&i.DeletedAt,
 	)
 	return i, err
 }
