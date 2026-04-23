@@ -123,9 +123,6 @@ func NewServer(config util.Config, store db.Store, tokenMaker token.Maker, gptCl
 func (server *Server) setupRouter() {
 	router := gin.Default()
 
-	// Serve static assets (e.g. email logo images)
-	router.Static("/static", "templates/logo")
-
 	// Auth routes
 	v1 := router.Group("/v1")
 	v1.POST("/auth/parent", server.signUpParent)
