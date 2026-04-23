@@ -6,6 +6,7 @@ import (
 	"time"
 
 	db "github.com/The-You-School-HeadLamp/headlamp_backend/db/sqlc"
+	"github.com/The-You-School-HeadLamp/headlamp_backend/token"
 	"github.com/The-You-School-HeadLamp/headlamp_backend/util"
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
@@ -306,4 +307,83 @@ func (server *Server) upsertDeviceIfProvided(ctx *gin.Context, userIDStr, userTy
 			log.Info().Str("parent_id", userIDStr).Msg("upsertDevice: push_notifications_enabled set to true for parent")
 		}
 	}
+}
+
+// ─── POST /v1/parent/change-password ─────────────────────────────────────────
+// Requires the parent to be logged in (Bearer token).
+// Request:  { "current_password": "...", "password": "...", "confirm_password": "..." }
+// Success:  200 { "message": "Password changed successfully." }
+// Errors:   400 (validation / passwords don't match), 401 (wrong current password)
+
+type changePasswordRequest struct {
+	CurrentPassword string `json:"current_password" binding:"required"`
+	Password        string `json:"password"         binding:"required,min=8"`
+	ConfirmPassword string `json:"confirm_password" binding:"required"`
+}
+
+func (server *Server) changePassword(ctx *gin.Context) {
+	var req changePasswordRequest
+	if err := ctx.ShouldBindJSON(&req); err != nil {
+		ctx.JSON(http.StatusBadRequest, errorResponse(err))
+		return
+	}
+
+	if req.Password != req.ConfirmPassword {
+		ctx.JSON(http.StatusBadRequest, gin.H{"error": "password and confirm_password do not match"})
+		return
+	}
+
+	authPayload := ctx.MustGet(authorizationPayloadKey).(*token.Payload)
+
+	parent, err := server.store.GetParentByParentID(ctx, authPayload.UserID)
+	if err != nil {
+		ctx.JSON(http.StatusNotFound, gin.H{"error": ParentNotFoundError})
+		return
+	}
+
+	// Parents who signed up via OAuth may have no password set
+	if !parent.HashedPassword.Valid || parent.HashedPassword.String == "" {
+		ctx.JSON(http.StatusBadRequest, gin.H{"error": "password change is not available for OAuth accounts"})
+		return
+	}
+
+	// Verify the current password
+	if err = util.CheckPassword(req.CurrentPassword, parent.HashedPassword.String); err != nil {
+		ctx.JSON(http.StatusUnauthorized, gin.H{"error": "current password is incorrect"})
+		return
+	}
+
+	// Reject if new password is the same as the current one
+	if util.CheckPassword(req.Password, parent.HashedPassword.String) == nil {
+		ctx.JSON(http.StatusBadRequest, gin.H{"error": "new password must be different from your current password"})
+		return
+	}
+
+	hashedNew, err := util.HashPassword(req.Password)
+	if err != nil {
+		log.Error().Err(err).Str("parent_id", parent.ParentID).Msg("changePassword: hash failed")
+		ctx.JSON(http.StatusInternalServerError, errorResponse(err))
+		return
+	}
+
+	if err = server.store.UpdateParentPassword(ctx, hashedNew, parent.ParentID); err != nil {
+		log.Error().Err(err).Str("parent_id", parent.ParentID).Msg("changePassword: DB update failed")
+		ctx.JSON(http.StatusInternalServerError, errorResponse(err))
+		return
+	}
+
+	// Send confirmation email asynchronously
+	go func(email string) {
+		if server.emailService == nil {
+			return
+		}
+		changedAt := time.Now().UTC().Format("2 Jan 2006, 15:04 UTC")
+		if sendErr := server.emailService.SendPasswordResetEmail(email, changedAt); sendErr != nil {
+			log.Error().Err(sendErr).Str("email", email).Msg("changePassword: confirmation email failed")
+		} else {
+			log.Info().Str("email", email).Msg("changePassword: confirmation email sent")
+		}
+	}(parent.Email)
+
+	ctx.JSON(http.StatusOK, gin.H{"message": "Password changed successfully."})
 }
