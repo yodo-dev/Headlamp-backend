@@ -180,6 +180,7 @@ func (server *Server) setupRouter() {
 		childRoutes.GET("/courses", server.getMyCoursesForChild)
 		childRoutes.GET("/courses/stats", server.getMyCoursesStatsForChild)
 		childRoutes.GET("/course/:course_id", server.getMyCourse)
+		childRoutes.GET("/course/:course_id/module/:module_id", server.getMyModule)
 
 		// Social unlock flow
 		childRoutes.POST("/courses/:course_id/complete", server.completeCourse)

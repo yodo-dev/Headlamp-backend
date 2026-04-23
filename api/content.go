@@ -396,6 +396,67 @@ func (server *Server) getMyCourse(ctx *gin.Context) {
 	server.renderCourseForChild(ctx, child.ID, req.CourseID)
 }
 
+// GET /v1/child/course/:course_id/module/:module_id
+func (server *Server) getMyModule(ctx *gin.Context) {
+	child := ctx.MustGet(authorizationPayloadKey).(db.Child)
+	var req struct {
+		CourseID string `uri:"course_id" binding:"required"`
+		ModuleID string `uri:"module_id" binding:"required,alphanum"`
+	}
+	if !bindAndValidateUri(ctx, &req) {
+		return
+	}
+
+	module, err := server.fetchExternalModuleData(ctx, req.ModuleID)
+	if err != nil {
+		return
+	}
+
+	progress, err := server.store.GetChildModuleProgressForCourse(ctx, db.GetChildModuleProgressForCourseParams{
+		ChildID:   child.ID,
+		CourseID:  req.CourseID,
+		ModuleIds: []string{req.ModuleID},
+	})
+	if err != nil && err != sql.ErrNoRows {
+		ctx.JSON(http.StatusInternalServerError, errorResponse(err))
+		return
+	}
+
+	isCompleted := false
+	if len(progress) > 0 {
+		isCompleted = progress[0].IsCompleted
+	}
+
+	clean := CleanModule{
+		ID:          module.DocumentID,
+		Title:       module.Title,
+		Order:       module.Order,
+		Description: flattenDescription(module.Description),
+		IsCompleted: isCompleted,
+	}
+
+	go server.logActivityAndNotify(ctx, child.ID, "module_started", req.ModuleID, module.Title)
+
+	if module.Video != nil {
+		clean.Video = &CleanVideo{
+			URL:  server.absoluteURL(module.Video.URL),
+			Mime: module.Video.Mime,
+			Size: module.Video.Size,
+		}
+	}
+	if module.Quiz != nil {
+		clean.Quiz = &CleanQuiz{
+			ID:                            module.Quiz.DocumentID,
+			Title:                         module.Quiz.Title,
+			Format:                        module.Quiz.Format,
+			PassingScore:                  module.Quiz.Passing,
+			EstimatedCompletionTimeInMins: module.Quiz.EstimatedCompletionTimeInMins,
+		}
+	}
+
+	ctx.JSON(http.StatusOK, gin.H{"module": clean})
+}
+
 func (server *Server) getChildCourseModule(ctx *gin.Context) {
 	var req getChildCourseModuleRequest
 	if !bindAndValidateUri(ctx, &req) {
