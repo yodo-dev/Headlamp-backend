@@ -179,6 +179,10 @@ func (server *Server) setupRouter() {
 		// Course progress routes for child
 		childRoutes.GET("/courses", server.getMyCoursesForChild)
 		childRoutes.GET("/courses/stats", server.getMyCoursesStatsForChild)
+
+		// Social unlock flow
+		childRoutes.POST("/courses/:course_id/complete", server.completeCourse)
+		childRoutes.GET("/social-access", server.getChildSocialAccess)
 	}
 
 	// Activity tracking routes
@@ -231,6 +235,10 @@ func (server *Server) setupRouter() {
 		parentRoutes.GET("/child/:id/insights/engagement", server.getEngagementOverview)
 		parentRoutes.GET("/child/:id/insights/content-monitoring", server.getContentMonitoringSummary)
 		parentRoutes.POST("/child/:id/insights/content-monitoring/event", server.postContentMonitoringEvent)
+
+		// Social unlock flow
+		parentRoutes.GET("/child/:id/unlock-status", server.getUnlockStatus)
+		parentRoutes.POST("/child/:id/social-apps/:social_media_id/enable", server.parentEnableSocialApp)
 
 		// Parent daily insights
 		parentRoutes.GET("/child/:id/insights/daily", server.getParentDailyInsight)

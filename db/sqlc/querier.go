@@ -179,6 +179,24 @@ type Querier interface {
 	GetParentInsightHistory(ctx context.Context, arg GetParentInsightHistoryParams) ([]ParentDailyInsight, error)
 	MarkParentInsightRead(ctx context.Context, arg MarkParentInsightReadParams) (ParentDailyInsight, error)
 	GetAllChildrenForParentInsightScheduler(ctx context.Context) ([]GetAllChildrenForParentInsightSchedulerRow, error)
+
+	// ── Social Unlock Flow (migration 000017) ─────────────────────────────────
+	UpsertChildProgressGate(ctx context.Context, arg UpsertChildProgressGateParams) (ChildProgressGate, error)
+	GetChildProgressGate(ctx context.Context, childID string) (ChildProgressGate, error)
+	GetChildCourseUnlocks(ctx context.Context, childID string) ([]ChildCourseUnlock, error)
+	GetChildCourseUnlockByCourse(ctx context.Context, arg GetChildCourseUnlockByCourseParams) (ChildCourseUnlock, error)
+	UpsertChildCourseUnlock(ctx context.Context, arg UpsertChildCourseUnlockParams) error
+	UpdateChildCourseUnlockStatus(ctx context.Context, arg UpdateChildCourseUnlockStatusParams) (ChildCourseUnlock, error)
+	CountCompletedCoursesForChild(ctx context.Context, childID string) (int64, error)
+	GetFirstLockedCourseForChild(ctx context.Context, childID string) (ChildCourseUnlock, error)
+	GetSocialAppAccessForChild(ctx context.Context, childID string) ([]SocialAppAccessWithPlatform, error)
+	GetSocialAppAccessByChildAndSocialMedia(ctx context.Context, arg GetSocialAppAccessByChildAndSocialMediaParams) (SocialAppAccess, error)
+	UpsertSocialAppAccess(ctx context.Context, arg UpsertSocialAppAccessParams) error
+	MakeSocialAppEligible(ctx context.Context, arg MakeSocialAppEligibleParams) (SocialAppAccess, error)
+	EnableSocialApp(ctx context.Context, arg EnableSocialAppParams) (SocialAppAccess, error)
+	CountNonLockedSocialAppsForChild(ctx context.Context, childID string) (int64, error)
+	GetFirstLockedSocialAppForChild(ctx context.Context, childID string) (SocialAppAccess, error)
+	InsertUnlockAuditEvent(ctx context.Context, arg InsertUnlockAuditEventParams) error
 }
 
 var _ Querier = (*Queries)(nil)

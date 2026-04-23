@@ -304,6 +304,7 @@ func (server *Server) handleDigitalPermitTestWS(ctx *gin.Context) {
 
 			// Notify parent that the test has been completed
 			go server.logActivityAndNotify(ctx, req.ChildID, "digital_permit_test_completed", testID.String(), "Digital Permit Test")
+			go server.triggerDPTUnlockInitialization(req.ChildID)
 		}
 	}
 }
@@ -475,11 +476,11 @@ func (server *Server) handleDigitalPermitTestWSV2(ctx *gin.Context) {
 	// --- Main Message Loop (for both new and resumed tests) ---
 	const SETUP_QUESTIONS = 2 // Age and device ownership questions
 	const PASS_PERCENTAGE = 0.80
-	
+
 	// Calculate pass points based on max questions
 	maxPointsFloat := float64(maxQuestions)
 	passPoints := maxPointsFloat * PASS_PERCENTAGE
-	
+
 	for {
 		var msg digitalPermitTestAnswer
 		if err := conn.ReadJSON(&msg); err != nil {
@@ -599,7 +600,7 @@ func (server *Server) handleDigitalPermitTestWSV2(ctx *gin.Context) {
 				passStatus = "NOT YET - Keep Learning!"
 			}
 			completionText := fmt.Sprintf("You did it—Fantastic job completing all %d questions of the Digital Permit Test!\n\nFinal Score: %.1f/%d (%.1f%%)\nStatus: %s", maxQuestions, totalScore, maxQuestions, percentage, passStatus)
-			
+
 			finalMessage := gin.H{
 				"role":        "assistant",
 				"status":      "complete",
@@ -613,6 +614,7 @@ func (server *Server) handleDigitalPermitTestWSV2(ctx *gin.Context) {
 
 			// Notify parent that the test has been completed
 			go server.logActivityAndNotify(ctx, req.ChildID, "digital_permit_test_completed", testID.String(), "Digital Permit Test")
+			go server.triggerDPTUnlockInitialization(req.ChildID)
 			break
 		}
 
@@ -694,6 +696,7 @@ func (server *Server) handleDigitalPermitTestWSV2(ctx *gin.Context) {
 
 			// Notify parent that the test has been completed
 			go server.logActivityAndNotify(ctx, req.ChildID, "digital_permit_test_completed", testID.String(), "Digital Permit Test")
+			go server.triggerDPTUnlockInitialization(req.ChildID)
 		}
 	}
 }
