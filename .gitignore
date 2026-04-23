@@ -1,3 +1,6 @@
 docs/
 api-docs/
 headlamp-63f19-firebase-adminsdk-fbsvc-f8fe4a1661.json
+app.development.env
+app.env
+app.production.env
