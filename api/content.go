@@ -247,14 +247,19 @@ func (server *Server) getChildCourse(ctx *gin.Context) {
 	if !bindAndValidateUri(ctx, &getCourseReq) {
 		return
 	}
+	server.renderCourseForChild(ctx, getCourseReq.ID, getCourseReq.CourseID)
+}
 
+// renderCourseForChild fetches and renders a course for the given childID + courseID.
+// Shared by both the parent-auth (getChildCourse) and child-auth (getMyCourse) handlers.
+func (server *Server) renderCourseForChild(ctx *gin.Context, childID, courseID string) {
 	base := strings.TrimRight(server.config.ExternalContentBaseURL, "/")
 	if base == "" {
 		ctx.JSON(http.StatusInternalServerError, gin.H{"error": "external content base URL not configured"})
 		return
 	}
 
-	reqURL := fmt.Sprintf("%s/api/courses/%s?populate[course_modules][populate]=quiz", base, getCourseReq.CourseID)
+	reqURL := fmt.Sprintf("%s/api/courses/%s?populate[course_modules][populate]=quiz", base, courseID)
 
 	// HTTP client with timeout
 	timeout := server.config.ExternalRequestTimeout
@@ -297,7 +302,7 @@ func (server *Server) getChildCourse(ctx *gin.Context) {
 	c := ext.Data
 
 	// Log that the child has started the course and notify the parent
-	go server.logActivityAndNotify(ctx, getCourseReq.ID, "course_started", getCourseReq.CourseID, c.Title)
+	go server.logActivityAndNotify(ctx, childID, "course_started", courseID, c.Title)
 
 	// Get module IDs from the external response
 	moduleIDs := make([]string, len(c.Modules))
@@ -307,8 +312,8 @@ func (server *Server) getChildCourse(ctx *gin.Context) {
 
 	// Get module progress from our DB
 	progress, err := server.store.GetChildModuleProgressForCourse(ctx, db.GetChildModuleProgressForCourseParams{
-		ChildID:   getCourseReq.ID,
-		CourseID:  getCourseReq.CourseID,
+		ChildID:   childID,
+		CourseID:  courseID,
 		ModuleIds: moduleIDs,
 	})
 	if err != nil && err != sql.ErrNoRows {
@@ -367,13 +372,28 @@ func (server *Server) getChildCourse(ctx *gin.Context) {
 			Title:       m.Title,
 			Order:       m.Order,
 			Description: flattenDescription(moduleData.Description),
-			IsCompleted: progressMap[m.DocumentID], // Defaults to false if not in map
+			IsCompleted: progressMap[m.DocumentID],
 			Video:       cleanVideo,
 		}
 	}
 
 	log.Info().Str("course_id", c.DocumentID).Str("title", c.Title).Msg("successfully retrieved course")
 	ctx.JSON(http.StatusOK, gin.H{"course": clean})
+}
+
+// getMyCourse is the child-auth equivalent of getChildCourse.
+// GET /v1/child/course/:course_id — child uses their own device token.
+func (server *Server) getMyCourse(ctx *gin.Context) {
+	child := ctx.MustGet(authorizationPayloadKey).(db.Child)
+
+	var req struct {
+		CourseID string `uri:"course_id" binding:"required"`
+	}
+	if !bindAndValidateUri(ctx, &req) {
+		return
+	}
+
+	server.renderCourseForChild(ctx, child.ID, req.CourseID)
 }
 
 func (server *Server) getChildCourseModule(ctx *gin.Context) {

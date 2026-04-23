@@ -321,8 +321,8 @@ func (server *Server) handleDigitalPermitTestWSV2(ctx *gin.Context) {
 	debugMode := ctx.Query("debug") == "true"
 	var maxQuestions int
 	if debugMode {
-		maxQuestions = 7
-		log.Info().Str("child_id", req.ChildID).Msg("debug mode enabled - limiting to 7 questions")
+		maxQuestions = 10
+		log.Info().Str("child_id", req.ChildID).Msg("debug mode enabled - limiting to 10 questions")
 	} else {
 		maxQuestions = 50
 	}
