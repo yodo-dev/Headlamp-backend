@@ -11,6 +11,7 @@ SET
     gender = COALESCE(sqlc.narg(gender), gender),
     profile_image_url = COALESCE(sqlc.narg(profile_image_url), profile_image_url),
     push_notifications_enabled = COALESCE(sqlc.narg(push_notifications_enabled), push_notifications_enabled),
+    date_of_birth = COALESCE(sqlc.narg(date_of_birth), date_of_birth),
     updated_at = NOW()
 WHERE id = sqlc.arg(id)
 RETURNING *;

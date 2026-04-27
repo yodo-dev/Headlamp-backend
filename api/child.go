@@ -249,6 +249,11 @@ func (server *Server) updateChildProfile(ctx *gin.Context) {
 	if file != nil {
 		defer file.Close()
 
+		if header.Size > 15<<20 {
+			ctx.JSON(http.StatusRequestEntityTooLarge, errorResponse(errors.New("profile image must not exceed 15MB")))
+			return
+		}
+
 		// Upload to the external content provider
 		uploadURL, err := server.uploader.UploadFile(header.Filename, file, "app/child_profile_images")
 		if err != nil {

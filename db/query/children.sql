@@ -15,9 +15,10 @@ INSERT INTO children (
     surname,
     age,
     gender,
-    profile_image_url
+    profile_image_url,
+    date_of_birth
 ) VALUES (
-    $1, $2, $3, $4, $5, $6, $7
+    $1, $2, $3, $4, $5, $6, $7, $8
 ) RETURNING *;
 
 -- name: DeleteChild :exec

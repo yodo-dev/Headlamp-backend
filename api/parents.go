@@ -21,52 +21,47 @@ const (
 	ParentAccountAlreadyExistsError = "a parent account with this user ID already exists"
 )
 
-// Avatar lists for default profile images
-var (
-	boyAvatars = []string{
-		"/uploads/avartar_boy_1_69f06e637b.png",
-		"/uploads/avartar_boy_2_6f049a8501.png",
-		"/uploads/avartar_boy_3_f727bc3a67.png",
-		"/uploads/avartar_boy_4_e8736f03c7.png",
-		"/uploads/avartar_boy_5_89d773bd69.png",
-		"/uploads/avartar_boy_6_84b6f30f1e.png",
-		"/uploads/avartar_boy_7_586f672d35.png",
-		"/uploads/avartar_boy_8_274baf51f7.png",
-	}
-	girlAvatars = []string{
-		"/uploads/avartar_girl_1_f7dbe8cde3.png",
-		"/uploads/avartar_girl_2_7c4ff5b9f0.png",
-		"/uploads/avartar_girl_3_b680f39f15.png",
-		"/uploads/avartar_girl_4_eac1f8e55a.png",
-		"/uploads/avartar_girl_5_10d7c81ca2.png",
-		"/uploads/avartar_girl_6_096ec03624.png",
-		"/uploads/avartar_girl_7_cf09bef107.png",
-		"/uploads/avartar_girl_8_ddef708a0a.png",
-	}
-)
-
-type createChildRequest struct {
-	FirstName string `form:"firstname" binding:"required"`
-	Surname   string `form:"surname"`
-	Age       int32  `form:"age" binding:"required,gt=0"`
-	Gender    string `form:"gender" binding:"required"`
+// defaultAvatars contains all default profile images
+var defaultAvatars = []string{
+	"/uploads/avartar_boy_1_69f06e637b.png",
+	"/uploads/avartar_boy_2_6f049a8501.png",
+	"/uploads/avartar_boy_3_f727bc3a67.png",
+	"/uploads/avartar_boy_4_e8736f03c7.png",
+	"/uploads/avartar_boy_5_89d773bd69.png",
+	"/uploads/avartar_boy_6_84b6f30f1e.png",
+	"/uploads/avartar_boy_7_586f672d35.png",
+	"/uploads/avartar_boy_8_274baf51f7.png",
+	"/uploads/avartar_girl_1_f7dbe8cde3.png",
+	"/uploads/avartar_girl_2_7c4ff5b9f0.png",
+	"/uploads/avartar_girl_3_b680f39f15.png",
+	"/uploads/avartar_girl_4_eac1f8e55a.png",
+	"/uploads/avartar_girl_5_10d7c81ca2.png",
+	"/uploads/avartar_girl_6_096ec03624.png",
+	"/uploads/avartar_girl_7_cf09bef107.png",
+	"/uploads/avartar_girl_8_ddef708a0a.png",
 }
 
-// getDefaultAvatarURL returns a random default avatar URL based on gender
-func (server *Server) getDefaultAvatarURL(gender string) string {
-	var avatars []string
-	if gender == "female" {
-		avatars = girlAvatars
-	} else {
-		avatars = boyAvatars
-	}
+type createChildRequest struct {
+	FirstName   string `form:"firstname" binding:"required"`
+	Surname     string `form:"surname"`
+	DateOfBirth string `form:"date_of_birth" binding:"required"`
+}
 
-	// Pick a random avatar from the list
-	randomIndex := rand.Intn(len(avatars))
-	avatarPath := avatars[randomIndex]
-
-	// Return the full URL with base URL
+// getDefaultAvatarURL returns a random default avatar URL
+func (server *Server) getDefaultAvatarURL() string {
+	randomIndex := rand.Intn(len(defaultAvatars))
+	avatarPath := defaultAvatars[randomIndex]
 	return fmt.Sprintf("%s%s", server.config.ExternalContentBaseURL, avatarPath)
+}
+
+// calculateAgeFromDOB computes the age in whole years from a date of birth.
+func calculateAgeFromDOB(dob time.Time) int32 {
+	now := time.Now()
+	age := int32(now.Year() - dob.Year())
+	if now.Month() < dob.Month() || (now.Month() == dob.Month() && now.Day() < dob.Day()) {
+		age--
+	}
+	return age
 }
 
 func (server *Server) createChild(ctx *gin.Context) {
@@ -94,6 +89,18 @@ func (server *Server) createChild(ctx *gin.Context) {
 		return
 	}
 
+	// Parse and validate date of birth
+	dob, err := time.Parse("01/02/06", req.DateOfBirth)
+	if err != nil {
+		ctx.JSON(http.StatusBadRequest, errorResponse(errors.New("invalid date_of_birth format, expected MM/DD/YY")))
+		return
+	}
+	childAge := calculateAgeFromDOB(dob)
+	if childAge < 4 || childAge > 18 {
+		ctx.JSON(http.StatusBadRequest, errorResponse(errors.New("child age must be between 4 and 18 years")))
+		return
+	}
+
 	// Handle the profile image upload
 	file, header, err := ctx.Request.FormFile("profile_image")
 	// We allow the file to be missing, but if it's provided, it must be valid.
@@ -106,6 +113,11 @@ func (server *Server) createChild(ctx *gin.Context) {
 	if file != nil {
 		defer file.Close()
 
+		if header.Size > 15<<20 {
+			ctx.JSON(http.StatusRequestEntityTooLarge, errorResponse(errors.New("profile image must not exceed 15MB")))
+			return
+		}
+
 		// Upload to the external content provider
 		uploadURL, err := server.uploader.UploadFile(header.Filename, file, "app/child_profile_images")
 		if err != nil {
@@ -115,9 +127,8 @@ func (server *Server) createChild(ctx *gin.Context) {
 		}
 		profileImageURL = sql.NullString{String: uploadURL, Valid: true}
 	} else {
-		// Use default avatar based on gender
-		defaultAvatarURL := server.getDefaultAvatarURL(req.Gender)
-		profileImageURL = sql.NullString{String: defaultAvatarURL, Valid: true}
+		// Use a random default avatar
+		profileImageURL = sql.NullString{String: server.getDefaultAvatarURL(), Valid: true}
 	}
 
 	parent, err := server.store.GetParentByParentID(ctx, parentUserID)
@@ -140,9 +151,10 @@ func (server *Server) createChild(ctx *gin.Context) {
 		FirstName:       req.FirstName,
 		Surname:         req.Surname,
 		FamilyID:        parent.FamilyID,
-		Age:             sql.NullInt32{Int32: req.Age, Valid: req.Age > 0},
-		Gender:          sql.NullString{String: req.Gender, Valid: req.Gender != ""},
+		Age:             sql.NullInt32{Int32: childAge, Valid: true},
+		Gender:          sql.NullString{},
 		ProfileImageUrl: profileImageURL,
+		DateOfBirth:     pgtype.Date{Time: dob, Valid: true},
 	})
 	if err != nil {
 		log.Error().Err(err).Msg("failed to create child")
@@ -166,8 +178,7 @@ func (server *Server) createChild(ctx *gin.Context) {
 type updateChildRequest struct {
 	FirstName                *string `json:"first_name"`
 	Surname                  *string `json:"surname"`
-	Age                      *int32  `json:"age"`
-	Gender                   *string `json:"gender"`
+	DateOfBirth              *string `json:"date_of_birth"`
 	PushNotificationsEnabled *bool   `json:"push_notifications_enabled"`
 }
 
@@ -204,11 +215,11 @@ func (server *Server) updateChild(ctx *gin.Context) {
 
 	// Prepare parameters for the update query
 	params := db.UpdateChildParams{
-		ID:        child.ID,
-		FirstName: pgtype.Text{String: child.FirstName, Valid: true},
-		Surname:   pgtype.Text{String: child.Surname, Valid: true},
-		Age:       child.Age,
-		Gender:    child.Gender,
+		ID:          child.ID,
+		FirstName:   pgtype.Text{String: child.FirstName, Valid: true},
+		Surname:     pgtype.Text{String: child.Surname, Valid: true},
+		Age:         child.Age,
+		DateOfBirth: child.DateOfBirth,
 	}
 
 	if bodyReq.FirstName != nil {
@@ -217,11 +228,19 @@ func (server *Server) updateChild(ctx *gin.Context) {
 	if bodyReq.Surname != nil {
 		params.Surname = pgtype.Text{String: *bodyReq.Surname, Valid: true}
 	}
-	if bodyReq.Age != nil {
-		params.Age = pgtype.Int4{Int32: *bodyReq.Age, Valid: true}
-	}
-	if bodyReq.Gender != nil {
-		params.Gender = pgtype.Text{String: *bodyReq.Gender, Valid: true}
+	if bodyReq.DateOfBirth != nil {
+		dob, err := time.Parse("01/02/06", *bodyReq.DateOfBirth)
+		if err != nil {
+			ctx.JSON(http.StatusBadRequest, errorResponse(errors.New("invalid date_of_birth format, expected MM/DD/YY")))
+			return
+		}
+		childAge := calculateAgeFromDOB(dob)
+		if childAge < 4 || childAge > 18 {
+			ctx.JSON(http.StatusBadRequest, errorResponse(errors.New("child age must be between 4 and 18 years")))
+			return
+		}
+		params.Age = pgtype.Int4{Int32: childAge, Valid: true}
+		params.DateOfBirth = pgtype.Date{Time: dob, Valid: true}
 	}
 	if bodyReq.PushNotificationsEnabled != nil {
 		params.PushNotificationsEnabled = pgtype.Bool{Bool: *bodyReq.PushNotificationsEnabled, Valid: true}

@@ -475,6 +475,7 @@ type Child struct {
 	Age                      pgtype.Int4        `json:"age"`
 	Gender                   pgtype.Text        `json:"gender"`
 	ProfileImageUrl          pgtype.Text        `json:"profile_image_url"`
+	DateOfBirth              pgtype.Date        `json:"date_of_birth"`
 	CreatedAt                time.Time          `json:"created_at"`
 	UpdatedAt                time.Time          `json:"updated_at"`
 	PushNotificationsEnabled bool               `json:"push_notifications_enabled"`

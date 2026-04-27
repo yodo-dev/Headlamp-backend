@@ -18,13 +18,14 @@ type CreateChildTxParams struct {
 	Age             sql.NullInt32
 	Gender          sql.NullString
 	ProfileImageUrl sql.NullString
+	DateOfBirth     pgtype.Date
 }
 
 // CreateChildTxResult is the result of the create child transaction.
 // It contains the newly created child record.
 type CreateChildTxResult struct {
-	Child         Child         `json:"child"`
-	DeepLinkCode  DeepLinkCode  `json:"deepLinkCode"`
+	Child        Child        `json:"child"`
+	DeepLinkCode DeepLinkCode `json:"deepLinkCode"`
 }
 
 // CreateChildTx performs the creation of a child and their initial onboarding progress within a single database transaction.
@@ -50,6 +51,7 @@ func (store *SQLStore) CreateChildTx(ctx context.Context, arg CreateChildTxParam
 			Age:             pgAge,
 			Gender:          pgGender,
 			ProfileImageUrl: pgProfileImageURL,
+			DateOfBirth:     arg.DateOfBirth,
 		})
 		if err != nil {
 			return err

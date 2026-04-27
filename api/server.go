@@ -122,6 +122,7 @@ func NewServer(config util.Config, store db.Store, tokenMaker token.Maker, gptCl
 
 func (server *Server) setupRouter() {
 	router := gin.Default()
+	router.MaxMultipartMemory = 15 << 20 // 15 MB
 
 	// Auth routes
 	v1 := router.Group("/v1")

@@ -19,10 +19,11 @@ INSERT INTO children (
     surname,
     age,
     gender,
-    profile_image_url
+    profile_image_url,
+    date_of_birth
 ) VALUES (
-    $1, $2, $3, $4, $5, $6, $7
-) RETURNING id, family_id, first_name, surname, age, gender, profile_image_url, created_at, updated_at, push_notifications_enabled, deleted_at
+    $1, $2, $3, $4, $5, $6, $7, $8
+) RETURNING id, family_id, first_name, surname, age, gender, profile_image_url, date_of_birth, created_at, updated_at, push_notifications_enabled, deleted_at
 `
 
 type CreateChildParams struct {
@@ -33,6 +34,7 @@ type CreateChildParams struct {
 	Age             pgtype.Int4 `json:"age"`
 	Gender          pgtype.Text `json:"gender"`
 	ProfileImageUrl pgtype.Text `json:"profile_image_url"`
+	DateOfBirth     pgtype.Date `json:"date_of_birth"`
 }
 
 func (q *Queries) CreateChild(ctx context.Context, arg CreateChildParams) (Child, error) {
@@ -44,6 +46,7 @@ func (q *Queries) CreateChild(ctx context.Context, arg CreateChildParams) (Child
 		arg.Age,
 		arg.Gender,
 		arg.ProfileImageUrl,
+		arg.DateOfBirth,
 	)
 	var i Child
 	err := row.Scan(
@@ -54,6 +57,7 @@ func (q *Queries) CreateChild(ctx context.Context, arg CreateChildParams) (Child
 		&i.Age,
 		&i.Gender,
 		&i.ProfileImageUrl,
+		&i.DateOfBirth,
 		&i.CreatedAt,
 		&i.UpdatedAt,
 		&i.PushNotificationsEnabled,
@@ -73,7 +77,7 @@ func (q *Queries) DeleteChild(ctx context.Context, id string) error {
 }
 
 const getChild = `-- name: GetChild :one
-SELECT id, family_id, first_name, surname, age, gender, profile_image_url, created_at, updated_at, push_notifications_enabled, deleted_at FROM children
+SELECT id, family_id, first_name, surname, age, gender, profile_image_url, date_of_birth, created_at, updated_at, push_notifications_enabled, deleted_at FROM children
 WHERE id = $1 AND deleted_at IS NULL LIMIT 1
 `
 
@@ -88,6 +92,7 @@ func (q *Queries) GetChild(ctx context.Context, id string) (Child, error) {
 		&i.Age,
 		&i.Gender,
 		&i.ProfileImageUrl,
+		&i.DateOfBirth,
 		&i.CreatedAt,
 		&i.UpdatedAt,
 		&i.PushNotificationsEnabled,
@@ -97,7 +102,7 @@ func (q *Queries) GetChild(ctx context.Context, id string) (Child, error) {
 }
 
 const getChildrenByFamilyID = `-- name: GetChildrenByFamilyID :many
-SELECT id, family_id, first_name, surname, age, gender, profile_image_url, created_at, updated_at, push_notifications_enabled, deleted_at FROM children
+SELECT id, family_id, first_name, surname, age, gender, profile_image_url, date_of_birth, created_at, updated_at, push_notifications_enabled, deleted_at FROM children
 WHERE family_id = $1 AND deleted_at IS NULL
 ORDER BY created_at
 `
@@ -119,6 +124,7 @@ func (q *Queries) GetChildrenByFamilyID(ctx context.Context, familyID string) ([
 			&i.Age,
 			&i.Gender,
 			&i.ProfileImageUrl,
+			&i.DateOfBirth,
 			&i.CreatedAt,
 			&i.UpdatedAt,
 			&i.PushNotificationsEnabled,

@@ -12,7 +12,7 @@ import (
 )
 
 const getChildByIDAndFamilyID = `-- name: GetChildByIDAndFamilyID :one
-SELECT id, family_id, first_name, surname, age, gender, profile_image_url, created_at, updated_at, push_notifications_enabled, deleted_at FROM children
+SELECT id, family_id, first_name, surname, age, gender, profile_image_url, date_of_birth, created_at, updated_at, push_notifications_enabled, deleted_at FROM children
 WHERE id = $1 AND family_id = $2 AND deleted_at IS NULL
 `
 
@@ -32,6 +32,7 @@ func (q *Queries) GetChildByIDAndFamilyID(ctx context.Context, arg GetChildByIDA
 		&i.Age,
 		&i.Gender,
 		&i.ProfileImageUrl,
+		&i.DateOfBirth,
 		&i.CreatedAt,
 		&i.UpdatedAt,
 		&i.PushNotificationsEnabled,
@@ -49,9 +50,10 @@ SET
     gender = COALESCE($4, gender),
     profile_image_url = COALESCE($5, profile_image_url),
     push_notifications_enabled = COALESCE($6, push_notifications_enabled),
+    date_of_birth = COALESCE($7, date_of_birth),
     updated_at = NOW()
-WHERE id = $7
-RETURNING id, family_id, first_name, surname, age, gender, profile_image_url, created_at, updated_at, push_notifications_enabled, deleted_at
+WHERE id = $8
+RETURNING id, family_id, first_name, surname, age, gender, profile_image_url, date_of_birth, created_at, updated_at, push_notifications_enabled, deleted_at
 `
 
 type UpdateChildParams struct {
@@ -61,6 +63,7 @@ type UpdateChildParams struct {
 	Gender                   pgtype.Text `json:"gender"`
 	ProfileImageUrl          pgtype.Text `json:"profile_image_url"`
 	PushNotificationsEnabled pgtype.Bool `json:"push_notifications_enabled"`
+	DateOfBirth              pgtype.Date `json:"date_of_birth"`
 	ID                       string      `json:"id"`
 }
 
@@ -72,6 +75,7 @@ func (q *Queries) UpdateChild(ctx context.Context, arg UpdateChildParams) (Child
 		arg.Gender,
 		arg.ProfileImageUrl,
 		arg.PushNotificationsEnabled,
+		arg.DateOfBirth,
 		arg.ID,
 	)
 	var i Child
@@ -83,6 +87,7 @@ func (q *Queries) UpdateChild(ctx context.Context, arg UpdateChildParams) (Child
 		&i.Age,
 		&i.Gender,
 		&i.ProfileImageUrl,
+		&i.DateOfBirth,
 		&i.CreatedAt,
 		&i.UpdatedAt,
 		&i.PushNotificationsEnabled,
