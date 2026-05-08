@@ -179,8 +179,16 @@ func buildConversationHistory(interactions []db.DigitalPermitTestInteraction, la
 	return history
 }
 
+// modelFallbackOrder defines the primary model and fallbacks in priority order.
+var modelFallbackOrder = []string{
+	openai.GPT5Mini,
+	openai.GPT4Dot1Mini,
+	openai.GPT4oMini,
+}
+
 // GetResponse sends a system prompt and conversation history to the OpenAI API
 // and returns the content of the AI's response as a string.
+// It tries models in fallback order and logs which model succeeded.
 func (c *client) GetResponse(systemPrompt string, history []openai.ChatCompletionMessage) (string, error) {
 	messages := []openai.ChatCompletionMessage{
 		{
@@ -190,24 +198,31 @@ func (c *client) GetResponse(systemPrompt string, history []openai.ChatCompletio
 	}
 	messages = append(messages, history...)
 
-	resp, err := c.openaiClient.CreateChatCompletion(
-		context.Background(),
-		openai.ChatCompletionRequest{
-			Model:          openai.GPT4o,
-			Messages:       messages,
-			ResponseFormat: &openai.ChatCompletionResponseFormat{Type: openai.ChatCompletionResponseFormatTypeJSONObject},
-		},
-	)
-
-	if err != nil {
-		return "", err
+	var lastErr error
+	for _, model := range modelFallbackOrder {
+		resp, err := c.openaiClient.CreateChatCompletion(
+			context.Background(),
+			openai.ChatCompletionRequest{
+				Model:          model,
+				Messages:       messages,
+				ResponseFormat: &openai.ChatCompletionResponseFormat{Type: openai.ChatCompletionResponseFormatTypeJSONObject},
+			},
+		)
+		if err != nil {
+			log.Warn().Str("model", model).Err(err).Msg("openai model failed, trying next fallback")
+			lastErr = err
+			continue
+		}
+		if len(resp.Choices) == 0 {
+			lastErr = errors.New("no response choices from OpenAI")
+			log.Warn().Str("model", model).Msg("openai returned no choices, trying next fallback")
+			continue
+		}
+		log.Info().Str("model", model).Msg("openai request succeeded")
+		return resp.Choices[0].Message.Content, nil
 	}
 
-	if len(resp.Choices) == 0 {
-		return "", errors.New("no response choices from OpenAI")
-	}
-
-	return resp.Choices[0].Message.Content, nil
+	return "", fmt.Errorf("all models failed, last error: %w", lastErr)
 }
 
 // buildSingleUserMessage wraps a single text string as a user chat message slice.
