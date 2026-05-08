@@ -1,6 +1,7 @@
 package api
 
 import (
+	"context"
 	"database/sql"
 	"errors"
 	"fmt"
@@ -467,6 +468,18 @@ func (server *Server) generateLinkCode(ctx *gin.Context) {
 			return
 		}
 		ctx.JSON(http.StatusInternalServerError, errorResponse(err))
+		return
+	}
+
+	firstModuleComplete, err := server.isFirstDigitalPermitModuleComplete(context.Background(), child.ID)
+	if err != nil {
+		ctx.JSON(http.StatusInternalServerError, errorResponse(err))
+		return
+	}
+	if !firstModuleComplete {
+		ctx.JSON(http.StatusForbidden, gin.H{
+			"error": "link code is locked until Digital Permit Module 1 is completed",
+		})
 		return
 	}
 

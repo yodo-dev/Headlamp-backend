@@ -178,6 +178,9 @@ func (server *Server) setupRouter() {
 		childRoutes.GET("/reflections/daily", server.getDailyReflection)
 
 		// Course progress routes for child
+		childRoutes.GET("/training/home", server.getChildTrainingHome)
+		childRoutes.POST("/training/steps/:step_key/video-complete", server.completeTrainingVideoStep)
+		childRoutes.GET("/training/tests/:stage_key/ws", server.handleChildTrainingTestWS)
 		childRoutes.GET("/courses", server.getMyCoursesForChild)
 		childRoutes.GET("/courses/stats", server.getMyCoursesStatsForChild)
 		childRoutes.GET("/course/:course_id", server.getMyCourse)
@@ -215,10 +218,12 @@ func (server *Server) setupRouter() {
 		parentRoutes.GET("/child/:id/link-code", server.generateLinkCode)
 		parentRoutes.GET("/child/:id/course/:course_id", server.getChildCourse)
 		parentRoutes.GET("/child/:id/course/:course_id/module/:module_id", server.getChildCourseModule)
+		parentRoutes.POST("/child/:id/training/steps/:step_key/video-complete", server.completeParentTrainingVideoStep)
 		parentRoutes.GET("/child/:id/course/:course_id/module/:module_id/quiz/:quiz_id", server.getQuizAttemptsForChild)
 		parentRoutes.POST("/child/:id/course/:course_id/module/:module_id/quiz/:quiz_id/submit", server.submitQuizAnswers)
 		parentRoutes.GET("/child/:id/course/latest", server.getLatestCourseForChild)
 		parentRoutes.GET("/child/:id/courses", server.getAllCoursesForChild)
+		parentRoutes.GET("/child/:id/training/home", server.getParentTrainingHome)
 		parentRoutes.GET("/child/:id/courses/latest", server.getLatestCourseForChild)
 		parentRoutes.GET("/child/:id/courses/stats", server.getCoursesStatsForChild)
 		parentRoutes.GET("/courses", server.getAllCourses)
@@ -229,8 +234,6 @@ func (server *Server) setupRouter() {
 		parentRoutes.POST("/child/:id/social-media", server.setSocialMediaAccess)
 		parentRoutes.GET("/child/:id/boosters", server.getBoostersForChildByParent)
 		parentRoutes.GET("/child/:id/booster-reflections", server.getReflectionVideosForChild)
-		parentRoutes.GET("/child/:id/digital-permit-test/ws", server.handleDigitalPermitTestWS)
-		parentRoutes.GET("/child/:id/digital-permit-test/v2/ws", server.handleDigitalPermitTestWSV2)
 
 		// Parent: view and trigger reflections for their child
 		parentRoutes.GET("/child/:id/reflections", server.getChildReflectionsForParent)
@@ -250,6 +253,14 @@ func (server *Server) setupRouter() {
 		parentRoutes.GET("/child/:id/insights/daily", server.getParentDailyInsight)
 		parentRoutes.GET("/child/:id/insights/daily/history", server.getParentDailyInsightHistory)
 		parentRoutes.POST("/child/:id/insights/daily/:insight_id/read", server.markParentInsightRead)
+	}
+
+	// Shared child-targeted digital permit test WS routes (accept both parent and child tokens)
+	sharedDigitalPermitRoutes := router.Group("/v1/parent/child")
+	sharedDigitalPermitRoutes.Use(server.simpleAuthMiddleware("parent", "child"))
+	{
+		sharedDigitalPermitRoutes.GET("/:id/digital-permit-test/ws", server.handleDigitalPermitTestWS)
+		sharedDigitalPermitRoutes.GET("/:id/digital-permit-test/v2/ws", server.handleDigitalPermitTestWSV2)
 	}
 
 	server.router = router

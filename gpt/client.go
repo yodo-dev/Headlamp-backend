@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 
 	db "github.com/The-You-School-HeadLamp/headlamp_backend/db/sqlc"
 	"github.com/rs/zerolog/log"
@@ -17,7 +18,9 @@ type GptClient interface {
 	InitiateDigitalPermitTest(ctx context.Context) (*GPTResponse, error)
 	ContinueDigitalPermitTest(ctx context.Context, previousInteractions []db.DigitalPermitTestInteraction, userAnswer string) (*GPTResponse, error)
 	InitiateDigitalPermitTestV2(ctx context.Context, curriculumContext string) (*GPTResponse, error)
+	InitiateDigitalPermitTestV2Stream(ctx context.Context, curriculumContext string, onDelta func(delta string) error) (*GPTResponse, error)
 	ContinueDigitalPermitTestV2(ctx context.Context, previousInteractions []db.DigitalPermitTestInteraction, userAnswer string, curriculumContext string) (*GPTResponse, error)
+	ContinueDigitalPermitTestV2Stream(ctx context.Context, previousInteractions []db.DigitalPermitTestInteraction, userAnswer string, curriculumContext string, onDelta func(delta string) error) (*GPTResponse, error)
 	GenerateDailyReflection(ctx context.Context, childCtx ChildReflectionContext) (*DailyReflectionResponse, error)
 	GeneratePostSessionReflection(ctx context.Context, sessCtx PostSessionContext) (*PostSessionReflectionResponse, error)
 	// GenerateInsights analyses aggregated child behavioral data and returns
@@ -85,13 +88,45 @@ func (c *client) InitiateDigitalPermitTestV2(ctx context.Context, curriculumCont
 	return &gptResponse, nil
 }
 
+func (c *client) InitiateDigitalPermitTestV2Stream(ctx context.Context, curriculumContext string, onDelta func(delta string) error) (*GPTResponse, error) {
+	systemPrompt := buildDigitalPermitTestSystemPromptV2(curriculumContext)
+	jsonResponse, err := c.GetResponseStream(ctx, systemPrompt, []openai.ChatCompletionMessage{}, onDelta)
+	if err != nil {
+		return nil, err
+	}
+
+	var gptResponse GPTResponse
+	if err := json.Unmarshal([]byte(jsonResponse), &gptResponse); err != nil {
+		return nil, err
+	}
+
+	return &gptResponse, nil
+}
+
 func (c *client) ContinueDigitalPermitTestV2(ctx context.Context, previousInteractions []db.DigitalPermitTestInteraction, userAnswer string, curriculumContext string) (*GPTResponse, error) {
 	history := buildConversationHistory(previousInteractions, userAnswer)
 	systemPrompt := buildDigitalPermitTestSystemPromptV2(curriculumContext)
 
-	log.Info().Str("system_prompt", systemPrompt).Msg("system prompt for digital permit test v2")
+	// log.Info().Str("system_prompt", systemPrompt).Msg("system prompt for digital permit test v2")
 
 	jsonResponse, err := c.GetResponse(systemPrompt, history)
+	if err != nil {
+		return nil, err
+	}
+
+	var gptResponse GPTResponse
+	if err := json.Unmarshal([]byte(jsonResponse), &gptResponse); err != nil {
+		return nil, err
+	}
+
+	return &gptResponse, nil
+}
+
+func (c *client) ContinueDigitalPermitTestV2Stream(ctx context.Context, previousInteractions []db.DigitalPermitTestInteraction, userAnswer string, curriculumContext string, onDelta func(delta string) error) (*GPTResponse, error) {
+	history := buildConversationHistory(previousInteractions, userAnswer)
+	systemPrompt := buildDigitalPermitTestSystemPromptV2(curriculumContext)
+
+	jsonResponse, err := c.GetResponseStream(ctx, systemPrompt, history, onDelta)
 	if err != nil {
 		return nil, err
 	}
@@ -223,6 +258,79 @@ func (c *client) GetResponse(systemPrompt string, history []openai.ChatCompletio
 	}
 
 	return "", fmt.Errorf("all models failed, last error: %w", lastErr)
+}
+
+// GetResponseStream sends a system prompt and conversation history to the OpenAI API
+// and streams response deltas through onDelta while collecting the final JSON string.
+func (c *client) GetResponseStream(ctx context.Context, systemPrompt string, history []openai.ChatCompletionMessage, onDelta func(delta string) error) (string, error) {
+	messages := []openai.ChatCompletionMessage{
+		{
+			Role:    openai.ChatMessageRoleSystem,
+			Content: systemPrompt,
+		},
+	}
+	messages = append(messages, history...)
+
+	var lastErr error
+	for _, model := range modelFallbackOrder {
+		stream, err := c.openaiClient.CreateChatCompletionStream(
+			ctx,
+			openai.ChatCompletionRequest{
+				Model:          model,
+				Messages:       messages,
+				ResponseFormat: &openai.ChatCompletionResponseFormat{Type: openai.ChatCompletionResponseFormatTypeJSONObject},
+			},
+		)
+		if err != nil {
+			log.Warn().Str("model", model).Err(err).Msg("openai stream model failed, trying next fallback")
+			lastErr = err
+			continue
+		}
+
+		var content string
+		for {
+			resp, recvErr := stream.Recv()
+			if errors.Is(recvErr, io.EOF) {
+				break
+			}
+			if recvErr != nil {
+				lastErr = recvErr
+				log.Warn().Str("model", model).Err(recvErr).Msg("openai stream recv failed, trying next fallback")
+				break
+			}
+
+			if len(resp.Choices) == 0 {
+				continue
+			}
+
+			delta := resp.Choices[0].Delta.Content
+			if delta == "" {
+				continue
+			}
+
+			content += delta
+			if onDelta != nil {
+				if cbErr := onDelta(delta); cbErr != nil {
+					_ = stream.Close()
+					return "", cbErr
+				}
+			}
+		}
+
+		_ = stream.Close()
+
+		if content == "" {
+			if lastErr == nil {
+				lastErr = errors.New("empty streamed content from OpenAI")
+			}
+			continue
+		}
+
+		log.Info().Str("model", model).Msg("openai stream request succeeded")
+		return content, nil
+	}
+
+	return "", fmt.Errorf("all stream models failed, last error: %w", lastErr)
 }
 
 // buildSingleUserMessage wraps a single text string as a user chat message slice.

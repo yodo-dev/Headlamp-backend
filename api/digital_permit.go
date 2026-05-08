@@ -1,11 +1,15 @@
 package api
 
 import (
+	"context"
 	"database/sql"
 	"errors"
 	"fmt"
 	"net/http"
 	"sort"
+	"strconv"
+	"strings"
+	"time"
 
 	db "github.com/The-You-School-HeadLamp/headlamp_backend/db/sqlc"
 	"github.com/gin-gonic/gin"
@@ -31,10 +35,192 @@ type digitalPermitTestAnswer struct {
 	Answer string `json:"answer"`
 }
 
+func (server *Server) resolveDigitalPermitTestMode(ctx *gin.Context, childID string) (debugMode bool, maxQuestions int) {
+	debugRequested := false
+	if rawDebug, exists := ctx.GetQuery("debug"); exists {
+		parsed, err := strconv.ParseBool(rawDebug)
+		if err != nil {
+			log.Warn().
+				Str("child_id", childID).
+				Str("debug_query", rawDebug).
+				Msg("invalid debug query value; defaulting to production mode")
+		} else {
+			debugRequested = parsed
+		}
+	}
+
+	isProduction := strings.EqualFold(server.config.Environment, "production")
+	debugMode = debugRequested && !isProduction
+
+	maxQuestions = 50
+	if debugMode {
+		maxQuestions = 10
+		log.Info().Str("child_id", childID).Msg("debug mode enabled - limiting to 10 questions")
+	} else if debugRequested && isProduction {
+		log.Warn().Str("child_id", childID).Msg("debug mode requested in production; using production limits")
+	}
+
+	return debugMode, maxQuestions
+}
+
+func sendAssistantStreamStart(conn *websocket.Conn) error {
+	return conn.WriteJSON(gin.H{
+		"role":         "assistant",
+		"status":       "streaming",
+		"message_type": "assistant_stream_start",
+	})
+}
+
+func sendAssistantStreamDelta(conn *websocket.Conn, delta string, streamText string) error {
+	return conn.WriteJSON(gin.H{
+		"role":         "assistant",
+		"status":       "streaming",
+		"message_type": "assistant_stream_delta",
+		"delta":        delta,
+		"stream_text":  streamText,
+	})
+}
+
+func sendAssistantStreamEnd(conn *websocket.Conn) error {
+	return conn.WriteJSON(gin.H{
+		"role":         "assistant",
+		"status":       "streaming",
+		"message_type": "assistant_stream_end",
+	})
+}
+
+func extractQuestionTextPreview(streamedJSON string) string {
+	keyIdx := strings.Index(streamedJSON, `"question_text"`)
+	if keyIdx == -1 {
+		return ""
+	}
+
+	rest := streamedJSON[keyIdx+len(`"question_text"`):]
+	colonIdx := strings.Index(rest, ":")
+	if colonIdx == -1 {
+		return ""
+	}
+
+	rest = strings.TrimSpace(rest[colonIdx+1:])
+	if rest == "" {
+		return ""
+	}
+
+	quoteIdx := strings.Index(rest, `"`)
+	if quoteIdx == -1 {
+		return ""
+	}
+
+	content := rest[quoteIdx+1:]
+	var b strings.Builder
+	escaped := false
+	for i := 0; i < len(content); i++ {
+		ch := content[i]
+		if escaped {
+			switch ch {
+			case 'n':
+				b.WriteByte('\n')
+			case 't':
+				b.WriteByte('\t')
+			case 'r':
+				b.WriteByte('\r')
+			case '"':
+				b.WriteByte('"')
+			case '\\':
+				b.WriteByte('\\')
+			default:
+				b.WriteByte(ch)
+			}
+			escaped = false
+			continue
+		}
+
+		if ch == '\\' {
+			escaped = true
+			continue
+		}
+
+		if ch == '"' {
+			break
+		}
+
+		b.WriteByte(ch)
+	}
+
+	return b.String()
+}
+
+func (server *Server) authorizeDigitalPermitTestAccess(ctx *gin.Context, childID string) bool {
+	payload := server.getAuthPayload(ctx)
+	if payload == nil {
+		ctx.JSON(http.StatusUnauthorized, gin.H{"error": "authorization payload missing"})
+		return false
+	}
+
+	if payload.Role == "child" {
+		if payload.UserID != childID {
+			ctx.JSON(http.StatusForbidden, gin.H{"error": "you do not have permission to access this child's data"})
+			return false
+		}
+		return true
+	}
+
+	if payload.Role == "parent" {
+		_, err := server.store.GetChildByIDAndFamilyID(ctx, db.GetChildByIDAndFamilyIDParams{
+			ID:       childID,
+			FamilyID: payload.FamilyID,
+		})
+		if err != nil {
+			if errors.Is(err, sql.ErrNoRows) {
+				ctx.JSON(http.StatusForbidden, gin.H{"error": "you do not have permission to access this child's data"})
+				return false
+			}
+			ctx.JSON(http.StatusInternalServerError, errorResponse(err))
+			return false
+		}
+		return true
+	}
+
+	ctx.JSON(http.StatusForbidden, gin.H{"error": "user role is not authorized for digital permit test"})
+	return false
+}
+
+func (server *Server) handleChildTrainingTestWS(ctx *gin.Context) {
+	child := ctx.MustGet(authorizationPayloadKey).(db.Child)
+	stageKey := ctx.Param("stage_key")
+
+	switch stageKey {
+	case trainingStageIntroReadinessTest:
+		ctx.Params = append(ctx.Params, gin.Param{Key: "id", Value: child.ID})
+		server.handleDigitalPermitTestWSV2(ctx)
+	case trainingStageDigitalPermitTest:
+		ctx.Params = append(ctx.Params, gin.Param{Key: "id", Value: child.ID})
+		server.handleDigitalPermitTestWSV2(ctx)
+	case trainingStageSocialMediaDriverTest:
+		ctx.JSON(http.StatusNotImplemented, gin.H{"error": "social media driver test is not configured yet"})
+	default:
+		ctx.JSON(http.StatusBadRequest, gin.H{"error": "unsupported training test stage"})
+	}
+}
+
 func (server *Server) handleDigitalPermitTestWS(ctx *gin.Context) {
 	var req digitalPermitTestUriRequest
 	if err := ctx.ShouldBindUri(&req); err != nil {
 		ctx.JSON(http.StatusBadRequest, errorResponse(err))
+		return
+	}
+
+	if !server.authorizeDigitalPermitTestAccess(ctx, req.ChildID) {
+		return
+	}
+
+	unlocked, err := server.isDigitalPermitTestUnlocked(context.Background(), req.ChildID)
+	if err != nil {
+		ctx.JSON(http.StatusInternalServerError, errorResponse(err))
+		return
+	}
+	if !unlocked {
+		ctx.JSON(http.StatusForbidden, gin.H{"error": "digital permit test is locked until all Digital Permit modules are completed"})
 		return
 	}
 
@@ -317,15 +503,22 @@ func (server *Server) handleDigitalPermitTestWSV2(ctx *gin.Context) {
 		return
 	}
 
-	// Check for debug mode query parameter
-	debugMode := ctx.Query("debug") == "true"
-	var maxQuestions int
-	if debugMode {
-		maxQuestions = 10
-		log.Info().Str("child_id", req.ChildID).Msg("debug mode enabled - limiting to 10 questions")
-	} else {
-		maxQuestions = 50
+	if !server.authorizeDigitalPermitTestAccess(ctx, req.ChildID) {
+		return
 	}
+
+	unlocked, err := server.isDigitalPermitTestUnlocked(context.Background(), req.ChildID)
+	if err != nil {
+		ctx.JSON(http.StatusInternalServerError, errorResponse(err))
+		return
+	}
+	if !unlocked {
+		ctx.JSON(http.StatusForbidden, gin.H{"error": "digital permit test is locked until all Digital Permit modules are completed"})
+		return
+	}
+
+	// Resolve mode based on query parameter and environment.
+	_, maxQuestions := server.resolveDigitalPermitTestMode(ctx, req.ChildID)
 
 	conn, err := upgrader.Upgrade(ctx.Writer, ctx.Request, nil)
 	if err != nil {
@@ -362,11 +555,48 @@ func (server *Server) handleDigitalPermitTestWSV2(ctx *gin.Context) {
 			}
 			curriculumContext := formatCurriculumForPrompt(curriculumContent)
 
+			if err := sendAssistantStreamStart(conn); err != nil {
+				log.Error().Err(err).Msg("failed to send assistant stream start")
+				return
+			}
+
+			streamBuffer := ""
+			streamChunks := 0
+			streamBytes := 0
+			streamStartedAt := time.Now()
+			log.Info().Str("child_id", req.ChildID).Str("test_id", testID.String()).Msg("digital permit v2 initial stream started")
 			// Get the initial question from GPT (v2 version with clean options)
-			initialInteraction, err := server.gptClient.InitiateDigitalPermitTestV2(ctx, curriculumContext)
+			initialInteraction, err := server.gptClient.InitiateDigitalPermitTestV2Stream(ctx, curriculumContext, func(delta string) error {
+				streamBuffer += delta
+				streamChunks++
+				streamBytes += len(delta)
+				preview := extractQuestionTextPreview(streamBuffer)
+				return sendAssistantStreamDelta(conn, delta, preview)
+			})
 			if err != nil {
-				log.Error().Err(err).Msg("failed to get initial question from GPT")
+				log.Error().Err(err).
+					Str("child_id", req.ChildID).
+					Str("test_id", testID.String()).
+					Int("stream_chunks", streamChunks).
+					Int("stream_bytes", streamBytes).
+					Int64("stream_elapsed_ms", time.Since(streamStartedAt).Milliseconds()).
+					Msg("failed to get initial question from GPT stream")
 				conn.WriteJSON(gin.H{"error": "failed to get initial question"})
+				return
+			}
+
+			log.Info().
+				Str("child_id", req.ChildID).
+				Str("test_id", testID.String()).
+				Int("stream_chunks", streamChunks).
+				Int("stream_bytes", streamBytes).
+				Int64("stream_elapsed_ms", time.Since(streamStartedAt).Milliseconds()).
+				Int("question_text_len", len(initialInteraction.QuestionText)).
+				Int("options_count", len(initialInteraction.Options)).
+				Msg("digital permit v2 initial stream completed")
+
+			if err := sendAssistantStreamEnd(conn); err != nil {
+				log.Error().Err(err).Msg("failed to send assistant stream end")
 				return
 			}
 
@@ -420,6 +650,77 @@ func (server *Server) handleDigitalPermitTestWSV2(ctx *gin.Context) {
 		sort.Slice(interactions, func(i, j int) bool {
 			return interactions[i].CreatedAt.Before(interactions[j].CreatedAt)
 		})
+
+		// If this resumed test already reached the current mode's question limit
+		// (e.g., debug=true with maxQuestions=10), complete it immediately.
+		const SETUP_QUESTIONS_ON_RESUME = 2
+		questionsAnsweredOnResume := len(interactions) - SETUP_QUESTIONS_ON_RESUME
+		if questionsAnsweredOnResume < 0 {
+			questionsAnsweredOnResume = 0
+		}
+		if questionsAnsweredOnResume >= maxQuestions {
+			var totalScore float64
+			for _, interaction := range interactions {
+				if interaction.PointsAwarded.Valid {
+					totalScore += interaction.PointsAwarded.Float64
+				}
+			}
+
+			maxPointsFloat := float64(maxQuestions)
+			passPoints := maxPointsFloat * 0.80
+			passed := totalScore >= passPoints
+			percentage := 0.0
+			if maxPointsFloat > 0 {
+				percentage = (totalScore / maxPointsFloat) * 100
+			}
+
+			status := db.DigitalPermitTestStatus("incomplete")
+			if passed {
+				status = db.DigitalPermitTestStatus("completed")
+			}
+
+			_, updateErr := server.store.UpdateDigitalPermitTestStatus(ctx, db.UpdateDigitalPermitTestStatusParams{
+				ID:     testID,
+				Status: status,
+			})
+			if updateErr != nil {
+				log.Error().Err(updateErr).Str("child_id", req.ChildID).Str("test_id", testID.String()).Msg("failed to finalize resumed digital permit test")
+				conn.WriteJSON(gin.H{"error": "failed to finalize resumed test"})
+				return
+			}
+
+			if passed {
+				_, _ = server.store.UpdateChildOnboardingStep(ctx, db.UpdateChildOnboardingStepParams{
+					ChildID:      req.ChildID,
+					OnboardingID: "digital_permit_test",
+				})
+			}
+
+			passStatus := "PASS ✓"
+			if !passed {
+				passStatus = "NOT YET - Keep Learning!"
+			}
+
+			completionText := fmt.Sprintf("You did it—Fantastic job completing all %d questions of the Digital Permit Test!\n\nFinal Score: %.1f/%d (%.1f%%)\nStatus: %s", maxQuestions, totalScore, maxQuestions, percentage, passStatus)
+
+			log.Info().
+				Str("child_id", req.ChildID).
+				Str("test_id", testID.String()).
+				Int("questions_answered", questionsAnsweredOnResume).
+				Int("max_questions", maxQuestions).
+				Float64("final_score", totalScore).
+				Bool("passed", passed).
+				Msg("resumed digital permit test auto-finalized")
+
+			_ = conn.WriteJSON(gin.H{
+				"role":        "assistant",
+				"status":      "complete",
+				"text":        completionText,
+				"final_score": totalScore,
+				"passed":      passed,
+			})
+			return
+		}
 
 		// Build and send the history to the client
 		if len(interactions) > 0 {
@@ -516,11 +817,55 @@ func (server *Server) handleDigitalPermitTestWSV2(ctx *gin.Context) {
 		}
 		curriculumContext := formatCurriculumForPrompt(curriculumContent)
 
+		if err := sendAssistantStreamStart(conn); err != nil {
+			log.Error().Err(err).Msg("failed to send assistant stream start")
+			break
+		}
+
+		streamBuffer := ""
+		streamChunks := 0
+		streamBytes := 0
+		streamStartedAt := time.Now()
+		log.Info().
+			Str("child_id", req.ChildID).
+			Str("test_id", testID.String()).
+			Int("question_number", questionsAsked+1).
+			Msg("digital permit v2 answer stream started")
 		// Get next question/feedback from GPT (v2 version with clean options)
-		gptResponse, err := server.gptClient.ContinueDigitalPermitTestV2(ctx, previousInteractions, msg.Answer, curriculumContext)
+		gptResponse, err := server.gptClient.ContinueDigitalPermitTestV2Stream(ctx, previousInteractions, msg.Answer, curriculumContext, func(delta string) error {
+			streamBuffer += delta
+			streamChunks++
+			streamBytes += len(delta)
+			preview := extractQuestionTextPreview(streamBuffer)
+			return sendAssistantStreamDelta(conn, delta, preview)
+		})
 		if err != nil {
+			log.Error().Err(err).
+				Str("child_id", req.ChildID).
+				Str("test_id", testID.String()).
+				Int("question_number", questionsAsked+1).
+				Int("stream_chunks", streamChunks).
+				Int("stream_bytes", streamBytes).
+				Int64("stream_elapsed_ms", time.Since(streamStartedAt).Milliseconds()).
+				Msg("failed to get next step from GPT stream")
 			conn.WriteJSON(gin.H{"error": "failed to get next step from GPT"})
 			continue
+		}
+
+		log.Info().
+			Str("child_id", req.ChildID).
+			Str("test_id", testID.String()).
+			Int("question_number", questionsAsked+1).
+			Int("stream_chunks", streamChunks).
+			Int("stream_bytes", streamBytes).
+			Int64("stream_elapsed_ms", time.Since(streamStartedAt).Milliseconds()).
+			Int("question_text_len", len(gptResponse.QuestionText)).
+			Int("options_count", len(gptResponse.Options)).
+			Msg("digital permit v2 answer stream completed")
+
+		if err := sendAssistantStreamEnd(conn); err != nil {
+			log.Error().Err(err).Msg("failed to send assistant stream end")
+			break
 		}
 
 		// Update the previous interaction

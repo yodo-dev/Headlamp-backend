@@ -1,0 +1,1 @@
+DROP TABLE IF EXISTS child_training_step_progress;

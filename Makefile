@@ -33,6 +33,13 @@ dropdb:
 migrateup:
 	migrate -path db/migration -database "$(DB_SOURCE)" -verbose up
 
+# Friendly aliases so `make migrate up` and `make up` both work.
+migrate: migrateup
+
+up: migrateup
+
+down: migratedown
+
 migrateup1:
 	migrate -path db/migration -database "$(DB_SOURCE)" -verbose up 1
 
@@ -84,7 +91,4 @@ kafka:
 		-e KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR=1 \
 		-d confluentinc/cp-kafka:latest
 
-test:
-	go test -v -cover -short ./...
-
-.PHONY: network postgres createdb dropdb migrateup migratedown migrateup1 migratedown1 new_migration db_docs db_schema sqlc test server mock zookeeper kafka test
+.PHONY: network postgres createdb dropdb migrate migrateup migratedown up down migrateup1 migratedown1 new_migration db_docs db_schema sqlc test server mock zookeeper kafka

@@ -53,6 +53,8 @@ type Store interface {
 	MarkOTPUsed(ctx context.Context, id uuid.UUID) error
 	InvalidateOTPsByEmail(ctx context.Context, email string) error
 	UpdateParentPassword(ctx context.Context, hashedPassword, parentID string) error
+	UpsertTrainingStepProgress(ctx context.Context, arg UpsertTrainingStepProgressParams) (TrainingStepProgress, error)
+	GetTrainingStepProgressForChild(ctx context.Context, childID string) ([]TrainingStepProgress, error)
 }
 
 // QuizAnswer defines the structure for a single answer submission.

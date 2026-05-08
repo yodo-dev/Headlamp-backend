@@ -42,11 +42,6 @@ func (s *ReflectionService) GenerateDailyReflection(ctx context.Context, childID
 		return nil, err
 	}
 
-	// Age gate: only 13+
-	if !child.Age.Valid || child.Age.Int32 < 13 {
-		return nil, errors.New("child does not meet age requirement for reflections")
-	}
-
 	childCtx, err := s.buildOrGetContext(ctx, childID)
 	if err != nil {
 		return nil, err
@@ -91,9 +86,6 @@ func (s *ReflectionService) GenerateDailyReflectionForced(ctx context.Context, c
 	child, err := s.store.GetChild(ctx, childID)
 	if err != nil {
 		return nil, err
-	}
-	if !child.Age.Valid || child.Age.Int32 < 13 {
-		return nil, errors.New("child does not meet age requirement for reflections")
 	}
 	childCtx, err := s.buildOrGetContext(ctx, childID)
 	if err != nil {

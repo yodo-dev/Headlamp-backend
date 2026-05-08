@@ -10,6 +10,7 @@ import (
 	"math"
 	"net/http"
 	"net/url"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -394,6 +395,16 @@ func (server *Server) getMyCourse(ctx *gin.Context) {
 		return
 	}
 
+	accessible, err := server.isDigitalPermitCourseAccessible(context.Background(), child.ID, req.CourseID)
+	if err != nil {
+		ctx.JSON(http.StatusInternalServerError, errorResponse(err))
+		return
+	}
+	if !accessible {
+		ctx.JSON(http.StatusForbidden, gin.H{"error": "course is locked until previous required modules are completed"})
+		return
+	}
+
 	server.renderCourseForChild(ctx, child.ID, req.CourseID)
 }
 
@@ -405,6 +416,16 @@ func (server *Server) getMyModule(ctx *gin.Context) {
 		ModuleID string `uri:"module_id" binding:"required,alphanum"`
 	}
 	if !bindAndValidateUri(ctx, &req) {
+		return
+	}
+
+	accessible, err := server.isDigitalPermitModuleAccessible(context.Background(), child.ID, req.ModuleID)
+	if err != nil {
+		ctx.JSON(http.StatusInternalServerError, errorResponse(err))
+		return
+	}
+	if !accessible {
+		ctx.JSON(http.StatusForbidden, gin.H{"error": "module is locked until previous required modules are completed"})
 		return
 	}
 
@@ -469,6 +490,28 @@ func (server *Server) getMyQuiz(ctx *gin.Context) {
 	if !bindAndValidateUri(ctx, &req) {
 		return
 	}
+
+	// TODO: Enforce lock checks once training prerequisites are fully tracked
+	// For now, allow access for testing
+	// accessible, err := server.isDigitalPermitModuleAccessible(context.Background(), child.ID, req.ModuleID)
+	// if err != nil {
+	// 	ctx.JSON(http.StatusInternalServerError, errorResponse(err))
+	// 	return
+	// }
+	// if !accessible {
+	// 	ctx.JSON(http.StatusForbidden, gin.H{"error": "quiz is locked until previous required modules are completed"})
+	// 	return
+	// }
+
+	// quizAccessible, err := server.isDigitalPermitQuizAccessible(context.Background(), child.ID, req.ModuleID)
+	// if err != nil {
+	// 	ctx.JSON(http.StatusInternalServerError, errorResponse(err))
+	// 	return
+	// }
+	// if !quizAccessible {
+	// 	ctx.JSON(http.StatusForbidden, gin.H{"error": "quiz is locked until the module video is completed"})
+	// 	return
+	// }
 
 	quizData, err := server.fetchExternalQuizData(ctx, req.QuizID)
 	if err != nil {
@@ -547,6 +590,26 @@ func (server *Server) submitMyQuizAnswers(ctx *gin.Context) {
 	}
 	if err := ctx.ShouldBindUri(&uri); err != nil {
 		ctx.JSON(http.StatusBadRequest, errorResponse(err))
+		return
+	}
+
+	accessible, err := server.isDigitalPermitModuleAccessible(context.Background(), child.ID, uri.ModuleID)
+	if err != nil {
+		ctx.JSON(http.StatusInternalServerError, errorResponse(err))
+		return
+	}
+	if !accessible {
+		ctx.JSON(http.StatusForbidden, gin.H{"error": "quiz is locked until previous required modules are completed"})
+		return
+	}
+
+	quizAccessible, err := server.isDigitalPermitQuizAccessible(context.Background(), child.ID, uri.ModuleID)
+	if err != nil {
+		ctx.JSON(http.StatusInternalServerError, errorResponse(err))
+		return
+	}
+	if !quizAccessible {
+		ctx.JSON(http.StatusForbidden, gin.H{"error": "quiz is locked until the module video is completed"})
 		return
 	}
 
@@ -683,6 +746,16 @@ func (server *Server) submitMyQuizAnswers(ctx *gin.Context) {
 			return
 		}
 		if txResult.Attempt.Passed {
+			if uri.ModuleID != "" {
+				_, _ = server.store.UpsertTrainingStepProgress(context.Background(), db.UpsertTrainingStepProgressParams{
+					ChildID:   child.ID,
+					StageKey:  trainingStageDigitalPermitCourse,
+					ModuleKey: pgtype.Text{String: uri.ModuleID, Valid: true},
+					StepKey:   uri.ModuleID + "_quiz",
+					StepType:  trainingStepTypeQuiz,
+					Status:    trainingStatusCompleted,
+				})
+			}
 			go server.sendParentNotification(
 				txResult.Child, txResult.Parent,
 				"Quiz Completed!",
@@ -1765,7 +1838,21 @@ func (server *Server) fetchAllExternalCourses(ctx *gin.Context) ([]extCourseItem
 		return nil, fmt.Errorf("external content base URL not configured")
 	}
 
-	reqURL := fmt.Sprintf("%s/api/courses", base)
+	coursesURL, err := url.Parse(fmt.Sprintf("%s/api/courses", base))
+	if err != nil {
+		log.Error().Err(err).Msg("failed to parse external courses url")
+		ctx.JSON(http.StatusInternalServerError, errorResponse(err))
+		return nil, err
+	}
+
+	// Fetch only published content and request a stable sequence from Strapi.
+	q := coursesURL.Query()
+	q.Set("publicationState", "live")
+	q.Set("sort[0]", "publishedAt:asc")
+	q.Set("sort[1]", "createdAt:asc")
+	coursesURL.RawQuery = q.Encode()
+
+	reqURL := coursesURL.String()
 
 	timeout := server.config.ExternalRequestTimeout
 	if timeout <= 0 {
@@ -1804,6 +1891,23 @@ func (server *Server) fetchAllExternalCourses(ctx *gin.Context) ([]extCourseItem
 		ctx.JSON(http.StatusBadGateway, errorResponse(err))
 		return nil, err
 	}
+
+	// Keep sequence deterministic even if provider ordering changes unexpectedly.
+	sort.SliceStable(extResp.Data, func(i, j int) bool {
+		left := extResp.Data[i]
+		right := extResp.Data[j]
+
+		if !left.PublishedAt.Equal(right.PublishedAt) {
+			return left.PublishedAt.Before(right.PublishedAt)
+		}
+		if !left.CreatedAt.Equal(right.CreatedAt) {
+			return left.CreatedAt.Before(right.CreatedAt)
+		}
+		if left.ID != right.ID {
+			return left.ID < right.ID
+		}
+		return left.DocumentID < right.DocumentID
+	})
 
 	return extResp.Data, nil
 }

@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"strings"
 
+	db "github.com/The-You-School-HeadLamp/headlamp_backend/db/sqlc"
 	// "github.com/The-You-School-HeadLamp/headlamp_backend/token"
 	// "github.com/The-You-School-HeadLamp/headlamp_backend/token"
 	"github.com/gin-gonic/gin"
@@ -54,6 +55,53 @@ func (server *Server) deviceAuthMiddleware() gin.HandlerFunc {
 			return
 		}
 		log.Debug().Str("user_id", payload.UserID).Str("role", payload.Role).Msg("deviceAuthMiddleware: token verified")
+
+		// Compatibility path: parent device may probe GET /v1/child/ while child is
+		// still using the parent's device before link-code onboarding.
+		// We allow this single endpoint by resolving a child within the same family.
+		if payload.Role == "parent" && ctx.Request.Method == http.MethodGet {
+			requestPath := ctx.Request.URL.Path
+			if requestPath == "/v1/child" || requestPath == "/v1/child/" {
+				var child db.Child
+				childID := strings.TrimSpace(ctx.Query("child_id"))
+
+				if childID != "" {
+					resolved, err := server.store.GetChildByIDAndFamilyID(ctx, db.GetChildByIDAndFamilyIDParams{
+						ID:       childID,
+						FamilyID: payload.FamilyID,
+					})
+					if err != nil {
+						log.Warn().Err(err).Str("path", requestPath).Str("parent_id", payload.UserID).Str("child_id", childID).Msg("deviceAuthMiddleware: parent child_id resolve failed")
+						ctx.AbortWithStatusJSON(http.StatusNotFound, errorResponse(errors.New("child not found in parent family")))
+						return
+					}
+					child = resolved
+				} else {
+					children, err := server.store.GetChildrenByFamilyID(ctx, payload.FamilyID)
+					if err != nil {
+						log.Error().Err(err).Str("path", requestPath).Str("parent_id", payload.UserID).Msg("deviceAuthMiddleware: failed to load children by family")
+						ctx.AbortWithStatusJSON(http.StatusInternalServerError, errorResponse(err))
+						return
+					}
+
+					if len(children) == 0 {
+						ctx.AbortWithStatusJSON(http.StatusNotFound, errorResponse(errors.New("no child found for parent family")))
+						return
+					}
+					if len(children) > 1 {
+						ctx.AbortWithStatusJSON(http.StatusBadRequest, errorResponse(errors.New("multiple children found; provide child_id query param")))
+						return
+					}
+
+					child = children[0]
+				}
+
+				log.Info().Str("path", requestPath).Str("parent_id", payload.UserID).Str("child_id", child.ID).Msg("deviceAuthMiddleware: parent fallback mapped to child context")
+				ctx.Set(authorizationPayloadKey, child)
+				ctx.Next()
+				return
+			}
+		}
 
 		// Check for role in payload
 		if payload.Role != "child" {
