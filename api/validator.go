@@ -71,3 +71,19 @@ func bindAndValidateUri(ctx *gin.Context, req interface{}) bool {
 	}
 	return true
 }
+
+func bindAndValidateQuery(ctx *gin.Context, req interface{}) bool {
+	if err := ctx.ShouldBindQuery(req); err != nil {
+		if verr, ok := err.(validator.ValidationErrors); ok {
+			errors := make(map[string]string)
+			for _, fe := range verr {
+				errors[fe.Field()] = getErrorMsg(fe)
+			}
+			ctx.JSON(http.StatusBadRequest, gin.H{"errors": errors})
+			return false
+		}
+		ctx.JSON(http.StatusBadRequest, gin.H{"error": "Invalid request format"})
+		return false
+	}
+	return true
+}

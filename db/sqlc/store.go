@@ -55,6 +55,11 @@ type Store interface {
 	UpdateParentPassword(ctx context.Context, hashedPassword, parentID string) error
 	UpsertTrainingStepProgress(ctx context.Context, arg UpsertTrainingStepProgressParams) (TrainingStepProgress, error)
 	GetTrainingStepProgressForChild(ctx context.Context, childID string) ([]TrainingStepProgress, error)
+
+	// ── Mobile UI config cache ───────────────────────────────────────────────
+	UpsertMobileConfigCache(ctx context.Context, arg UpsertMobileConfigCacheParams) (MobileConfigCacheRecord, error)
+	GetMobileConfigCacheByKey(ctx context.Context, cacheKey string) (MobileConfigCacheRecord, error)
+	MarkAllMobileConfigCacheStale(ctx context.Context) error
 }
 
 // QuizAnswer defines the structure for a single answer submission.

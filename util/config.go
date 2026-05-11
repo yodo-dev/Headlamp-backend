@@ -36,6 +36,11 @@ type Config struct {
 	ExternalContentBaseURL string        `mapstructure:"EXTERNAL_CONTENT_BASE_URL"`
 	ExternalContentToken   string        `mapstructure:"EXTERNAL_CONTENT_TOKEN"`
 	ExternalRequestTimeout time.Duration `mapstructure:"EXTERNAL_REQUEST_TIMEOUT"`
+	StrapiBaseURL          string        `mapstructure:"STRAPI_BASE_URL"`
+	StrapiAPIToken         string        `mapstructure:"STRAPI_API_TOKEN"`
+	StrapiWebhookSecret    string        `mapstructure:"STRAPI_WEBHOOK_SECRET"`
+	StrapiCDNPrefix        string        `mapstructure:"STRAPI_CDN_PREFIX"`
+	MobileConfigTTLSeconds int           `mapstructure:"MOBILE_CONFIG_TTL_SECONDS"`
 	OpenAIAPIKey           string        `mapstructure:"OPENAI_API_KEY"`
 
 	// Firebase Admin SDK
@@ -108,6 +113,11 @@ func LoadConfig(path string) (config Config, err error) {
 	viper.BindEnv("EXTERNAL_CONTENT_BASE_URL")
 	viper.BindEnv("EXTERNAL_CONTENT_TOKEN")
 	viper.BindEnv("EXTERNAL_REQUEST_TIMEOUT")
+	viper.BindEnv("STRAPI_BASE_URL")
+	viper.BindEnv("STRAPI_API_TOKEN")
+	viper.BindEnv("STRAPI_WEBHOOK_SECRET")
+	viper.BindEnv("STRAPI_CDN_PREFIX")
+	viper.BindEnv("MOBILE_CONFIG_TTL_SECONDS")
 	viper.BindEnv("OPENAI_API_KEY")
 	viper.BindEnv("ONESIGNAL_APP_ID")
 	viper.BindEnv("ONESIGNAL_API_KEY")

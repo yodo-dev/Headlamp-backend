@@ -1,0 +1,16 @@
+{
+  "config_version": "2026-01-01T00:00:00Z",
+  "ttl_seconds": 21600,
+  "items": [
+    {
+      "key": "home_banner_title",
+      "type": "text",
+      "value": "Welcome back!"
+    },
+    {
+      "key": "home_banner_icon",
+      "type": "icon",
+      "fallback_icon_name": "ic_home_banner_default"
+    }
+  ]
+}

@@ -13,6 +13,7 @@ import (
 	db "github.com/The-You-School-HeadLamp/headlamp_backend/db/sqlc"
 	"github.com/The-You-School-HeadLamp/headlamp_backend/gpt"
 	"github.com/The-You-School-HeadLamp/headlamp_backend/service"
+	"github.com/The-You-School-HeadLamp/headlamp_backend/strapi"
 	"github.com/The-You-School-HeadLamp/headlamp_backend/token"
 	"github.com/The-You-School-HeadLamp/headlamp_backend/util"
 	"github.com/gin-gonic/gin"
@@ -47,6 +48,7 @@ type Server struct {
 	insightsService        *service.InsightsService
 	parentInsightService   *service.ParentInsightService
 	parentInsightScheduler *service.ParentInsightScheduler
+	mobileConfigService    *service.MobileConfigService
 	sessionHub             *SessionHub
 }
 
@@ -57,6 +59,11 @@ func NewServer(config util.Config, store db.Store, tokenMaker token.Maker, gptCl
 	reflectionSvc := service.NewReflectionService(store, gptClient)
 	insightsSvc := service.NewInsightsService(store, gptClient)
 	parentInsightSvc := service.NewParentInsightService(store, gptClient)
+	strapiClient := strapi.NewClient(config.StrapiBaseURL, config.StrapiAPIToken, config.StrapiCDNPrefix, config.ExternalRequestTimeout)
+	mobileConfigSvc, err := service.NewMobileConfigService(store, strapiClient, config.MobileConfigTTLSeconds)
+	if err != nil {
+		return nil, fmt.Errorf("failed to initialize mobile config service: %w", err)
+	}
 
 	// Initialize Firebase Admin SDK
 	fbAuthClient, fbMsgClient, err := initFirebaseApp(context.Background(), config)
@@ -96,6 +103,7 @@ func NewServer(config util.Config, store db.Store, tokenMaker token.Maker, gptCl
 		insightsService:        insightsSvc,
 		parentInsightService:   parentInsightSvc,
 		parentInsightScheduler: service.NewParentInsightScheduler(store, parentInsightSvc, notificationSvc),
+		mobileConfigService:    mobileConfigSvc,
 		sessionHub:             NewSessionHub(),
 	}
 
@@ -143,6 +151,8 @@ func (server *Server) setupRouter() {
 
 	// Public routes
 	v1.POST("/child/link-code/verify", server.verifyLinkCode)
+	v1.GET("/mobile/config", server.getMobileConfig)
+	v1.POST("/webhooks/strapi", server.handleStrapiWebhook)
 
 	// Notification routes - require any authenticated user
 	notificationRoutes := router.Group("/v1/notifications")
