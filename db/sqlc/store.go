@@ -60,6 +60,18 @@ type Store interface {
 	UpsertMobileConfigCache(ctx context.Context, arg UpsertMobileConfigCacheParams) (MobileConfigCacheRecord, error)
 	GetMobileConfigCacheByKey(ctx context.Context, cacheKey string) (MobileConfigCacheRecord, error)
 	MarkAllMobileConfigCacheStale(ctx context.Context) error
+
+	// ── Customer.io analytics ────────────────────────────────────────────────
+	CreateAnalyticsEvent(ctx context.Context, arg CreateAnalyticsEventParams) (AnalyticsEventRecord, error)
+	GetAnalyticsEventBySourceEventID(ctx context.Context, sourceEventID string) (AnalyticsEventRecord, error)
+	ListPendingAnalyticsEvents(ctx context.Context, limit int32) ([]AnalyticsEventRecord, error)
+	MarkAnalyticsEventSynced(ctx context.Context, id uuid.UUID) error
+	MarkAnalyticsEventFailed(ctx context.Context, arg MarkAnalyticsEventFailedParams) error
+	CreateCustomerIOWebhookEvent(ctx context.Context, arg CreateCustomerIOWebhookEventParams) (CustomerIOWebhookEventRecord, error)
+	UpsertUserSegment(ctx context.Context, arg UpsertUserSegmentParams) (UserSegmentRecord, error)
+	ListActiveUserSegments(ctx context.Context, personID string) ([]UserSegmentRecord, error)
+	ExpireUserSegment(ctx context.Context, personID, segmentName string) error
+	CreateCustomerIOAttribution(ctx context.Context, arg CreateCustomerIOAttributionParams) (CustomerIOAttributionRecord, error)
 }
 
 // QuizAnswer defines the structure for a single answer submission.

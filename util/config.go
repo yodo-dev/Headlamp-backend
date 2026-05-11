@@ -53,6 +53,13 @@ type Config struct {
 	ReflectionCronSchedule string `mapstructure:"REFLECTION_CRON_SCHEDULE"`
 	ReflectionTestMode     bool   `mapstructure:"REFLECTION_TEST_MODE"` // bypass idempotency for testing
 
+	// Customer.io
+	CustomerIOSiteID        string `mapstructure:"CUSTOMERIO_SITE_ID"`
+	CustomerIOAPIKey        string `mapstructure:"CUSTOMERIO_API_KEY"`
+	CustomerIORegion        string `mapstructure:"CUSTOMERIO_REGION"`
+	CustomerIOTrackAPIURL   string `mapstructure:"CUSTOMERIO_TRACK_API_URL"`
+	CustomerIOWebhookSecret string `mapstructure:"CUSTOMERIO_WEBHOOK_SECRET"`
+
 	// Parent insight scheduler (standard 5-field cron expression)
 	ParentInsightCronSchedule string `mapstructure:"PARENT_INSIGHT_CRON_SCHEDULE"`
 
@@ -125,6 +132,11 @@ func LoadConfig(path string) (config Config, err error) {
 	viper.BindEnv("FIREBASE_SERVICE_ACCOUNT_JSON")
 	viper.BindEnv("REFLECTION_CRON_SCHEDULE")
 	viper.BindEnv("REFLECTION_TEST_MODE")
+	viper.BindEnv("CUSTOMERIO_SITE_ID")
+	viper.BindEnv("CUSTOMERIO_API_KEY")
+	viper.BindEnv("CUSTOMERIO_REGION")
+	viper.BindEnv("CUSTOMERIO_TRACK_API_URL")
+	viper.BindEnv("CUSTOMERIO_WEBHOOK_SECRET")
 	viper.BindEnv("PARENT_INSIGHT_CRON_SCHEDULE")
 	viper.BindEnv("SMTP_HOST")
 	viper.BindEnv("SMTP_PORT")

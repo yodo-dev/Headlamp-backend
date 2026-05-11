@@ -68,6 +68,49 @@ make migratedown1
 make new_migration name=your_migration_name
 ```
 
+### Customer.io analytics schema checks (migration 000028)
+```bash
+cp app.development.env app.env
+DB_SOURCE=$(grep '^DB_SOURCE=' app.env | cut -d= -f2-)
+
+make migratedev
+psql "$DB_SOURCE" -c "\dt user_segments"
+psql "$DB_SOURCE" -c "\dt customerio_event_attributions"
+```
+
+### Verify insert paths (rollback-safe)
+```bash
+psql "$DB_SOURCE" <<'SQL'
+BEGIN;
+INSERT INTO user_segments (person_id, user_id, role, segment_name, metadata, source)
+VALUES ('verify:temp-user', 'temp-user', 'parent', 'plan_free', '{"check":"ok"}'::jsonb, 'manual_verify');
+SELECT person_id, segment_name, source FROM user_segments WHERE person_id='verify:temp-user';
+ROLLBACK;
+
+BEGIN;
+INSERT INTO customerio_event_attributions (event_type, person_id, campaign_id, message_id, delivery_id, link_id, action, payload)
+VALUES ('opened', 'parent:temp-user', 'camp_test', 'msg_test', 'del_test', 'link_test', 'open', '{"check":"ok"}'::jsonb);
+SELECT event_type, person_id, action FROM customerio_event_attributions WHERE person_id='parent:temp-user';
+ROLLBACK;
+SQL
+```
+
+### Customer.io backfill CLI
+```bash
+# Dry run
+cp app.development.env app.env
+go run ./cmd/customerio_backfill --role all --limit 100 --dry-run
+
+# Real run
+cp app.development.env app.env
+go run ./cmd/customerio_backfill --role all --limit 100
+```
+
+Available flags:
+- `--role` values: `parent`, `child`, `all`
+- `--limit` max rows to process (`0` means no limit)
+- `--dry-run` logs targets without queue writes
+
 ### Migration Recovery (after `force` or schema mismatch)
 
 If `migrate version` shows a version as applied, but tables from that migration are missing, the DB state and migration state are out of sync.

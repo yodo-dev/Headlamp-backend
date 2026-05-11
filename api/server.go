@@ -10,6 +10,7 @@ import (
 	firebaseAdmin "firebase.google.com/go/v4"
 	firebaseAuth "firebase.google.com/go/v4/auth"
 	firebaseMessaging "firebase.google.com/go/v4/messaging"
+	"github.com/The-You-School-HeadLamp/headlamp_backend/crm"
 	db "github.com/The-You-School-HeadLamp/headlamp_backend/db/sqlc"
 	"github.com/The-You-School-HeadLamp/headlamp_backend/gpt"
 	"github.com/The-You-School-HeadLamp/headlamp_backend/service"
@@ -49,6 +50,9 @@ type Server struct {
 	parentInsightService   *service.ParentInsightService
 	parentInsightScheduler *service.ParentInsightScheduler
 	mobileConfigService    *service.MobileConfigService
+	analyticsService       *service.AnalyticsService
+	customerIOClient       crm.CustomerIOClient
+	customerIOSyncWorker   *service.CustomerIOSyncWorker
 	sessionHub             *SessionHub
 }
 
@@ -64,6 +68,15 @@ func NewServer(config util.Config, store db.Store, tokenMaker token.Maker, gptCl
 	if err != nil {
 		return nil, fmt.Errorf("failed to initialize mobile config service: %w", err)
 	}
+	customerIOClient := crm.NewCustomerIOClient(
+		config.CustomerIOSiteID,
+		config.CustomerIOAPIKey,
+		config.CustomerIOTrackAPIURL,
+		config.CustomerIOWebhookSecret,
+		config.ExternalRequestTimeout,
+	)
+	analyticsService := service.NewAnalyticsService(store, customerIOClient)
+	customerIOSyncWorker := service.NewCustomerIOSyncWorker(store, customerIOClient, 5*time.Second, 5)
 
 	// Initialize Firebase Admin SDK
 	fbAuthClient, fbMsgClient, err := initFirebaseApp(context.Background(), config)
@@ -104,6 +117,9 @@ func NewServer(config util.Config, store db.Store, tokenMaker token.Maker, gptCl
 		parentInsightService:   parentInsightSvc,
 		parentInsightScheduler: service.NewParentInsightScheduler(store, parentInsightSvc, notificationSvc),
 		mobileConfigService:    mobileConfigSvc,
+		analyticsService:       analyticsService,
+		customerIOClient:       customerIOClient,
+		customerIOSyncWorker:   customerIOSyncWorker,
 		sessionHub:             NewSessionHub(),
 	}
 
@@ -124,6 +140,8 @@ func NewServer(config util.Config, store db.Store, tokenMaker token.Maker, gptCl
 	if err := server.parentInsightScheduler.Start(config.ParentInsightCronSchedule); err != nil {
 		return nil, err
 	}
+
+	server.customerIOSyncWorker.Start(context.Background())
 
 	return server, nil
 }
@@ -152,7 +170,13 @@ func (server *Server) setupRouter() {
 	// Public routes
 	v1.POST("/child/link-code/verify", server.verifyLinkCode)
 	v1.GET("/mobile/config", server.getMobileConfig)
+	v1.POST("/analytics/identify", server.analyticsIdentify)
+	v1.POST("/analytics/events", server.analyticsEvent)
+	v1.POST("/analytics/events/batch", server.analyticsBatchEvents)
+	v1.POST("/analytics/sessions/start", server.analyticsSessionStart)
+	v1.POST("/analytics/sessions/end", server.analyticsSessionEnd)
 	v1.POST("/webhooks/strapi", server.handleStrapiWebhook)
+	v1.POST("/webhooks/customerio", server.handleCustomerIOWebhook)
 
 	// Notification routes - require any authenticated user
 	notificationRoutes := router.Group("/v1/notifications")
@@ -306,6 +330,12 @@ func (server *Server) Shutdown(ctx context.Context) error {
 func (server *Server) StopScheduler() {
 	if server.reflectionScheduler != nil {
 		server.reflectionScheduler.Stop()
+	}
+	if server.parentInsightScheduler != nil {
+		server.parentInsightScheduler.Stop()
+	}
+	if server.customerIOSyncWorker != nil {
+		server.customerIOSyncWorker.Stop()
 	}
 }
 
