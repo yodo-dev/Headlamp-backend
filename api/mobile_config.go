@@ -8,10 +8,9 @@ import (
 )
 
 type getMobileConfigRequest struct {
-	Locale     string `form:"locale"`
-	Local      string `form:"local"`
-	Platform   string `form:"platform" binding:"required,oneof=ios android"`
-	AppVersion string `form:"app_version" binding:"required"`
+	Lang       string `form:"lang"`
+	Platform   string `form:"platform" binding:"omitempty,oneof=ios android"`
+	AppVersion string `form:"app_version"`
 }
 
 func (server *Server) getMobileConfig(ctx *gin.Context) {
@@ -25,14 +24,7 @@ func (server *Server) getMobileConfig(ctx *gin.Context) {
 		return
 	}
 
-	locale := strings.TrimSpace(req.Locale)
-	if locale == "" {
-		locale = strings.TrimSpace(req.Local)
-	}
-	if locale == "" {
-		ctx.JSON(http.StatusBadRequest, gin.H{"errors": map[string]string{"Locale": "This field is required"}})
-		return
-	}
+	locale := strings.TrimSpace(req.Lang)
 
 	resp, err := server.mobileConfigService.GetConfig(ctx.Request.Context(), locale, req.Platform, req.AppVersion)
 	if err != nil {
