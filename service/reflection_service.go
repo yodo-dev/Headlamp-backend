@@ -2,6 +2,8 @@ package service
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -56,12 +58,19 @@ func (s *ReflectionService) RunPrivacyMaintenance(ctx context.Context) error {
 		return err
 	}
 
-	if textRedacted > 0 || mediaRedacted > 0 || textPurged > 0 || mediaPurged > 0 {
+	// Purge content whose retention_expires_at is already in the past.
+	contentPurged, err := sqlStore.PurgeReflectionContentByRetention(ctx, time.Now().UTC())
+	if err != nil {
+		return err
+	}
+
+	if textRedacted > 0 || mediaRedacted > 0 || textPurged > 0 || mediaPurged > 0 || contentPurged > 0 {
 		log.Info().
 			Int64("text_redacted", textRedacted).
 			Int64("media_redacted", mediaRedacted).
 			Int64("text_purged", textPurged).
 			Int64("media_purged", mediaPurged).
+			Int64("content_purged", contentPurged).
 			Int("retention_days", s.retention).
 			Msg("reflection privacy maintenance applied")
 	}
@@ -337,6 +346,12 @@ func (s *ReflectionService) RespondToReflection(ctx context.Context, reflectionI
 		return nil, err
 	}
 
+	// Store raw content separately and update privacy fields
+	if err := s.storeReflectionContentPrivacy(ctx, reflectionID, responseText, nil); err != nil {
+		log.Error().Err(err).Str("reflection_id", reflectionID.String()).Msg("failed to store reflection content privacy")
+		// Don't fail the response, but log the error
+	}
+
 	go s.postResponseUpdates(reflection.ChildID)
 	go func(id uuid.UUID) {
 		if err := s.store.AcknowledgeReflection(context.Background(), db.AcknowledgeReflectionParams{
@@ -364,6 +379,12 @@ func (s *ReflectionService) RespondToReflectionWithMedia(ctx context.Context, re
 	})
 	if err != nil {
 		return nil, err
+	}
+
+	// Store raw content separately and update privacy fields
+	if err := s.storeReflectionContentPrivacy(ctx, reflectionID, "", &mediaURL); err != nil {
+		log.Error().Err(err).Str("reflection_id", reflectionID.String()).Msg("failed to store reflection content privacy")
+		// Don't fail the response, but log the error
 	}
 
 	go s.postResponseUpdates(reflection.ChildID)
@@ -611,4 +632,59 @@ func summarizeReflectionText(responseText string, responseType db.ReflectionResp
 	}
 
 	return fmt.Sprintf("summary: type=%s words=%d tone=%s", responseType, len(words), tone)
+}
+
+// storeReflectionContentPrivacy stores raw reflection content in a separate table
+// with a hashed reference to avoid direct identity linkage. Sets retention for 30-day
+// auto-deletion in non-raw mode.
+func (s *ReflectionService) storeReflectionContentPrivacy(ctx context.Context, reflectionID uuid.UUID, responseText string, responseMediaURL *string) error {
+	// Generate content hash from reflection ID
+	hash := sha256.Sum256([]byte(reflectionID.String() + time.Now().UTC().Format(time.RFC3339Nano)))
+	contentHash := hex.EncodeToString(hash[:])
+
+	sqlStore, ok := s.store.(*db.SQLStore)
+	if !ok {
+		return fmt.Errorf("store does not support privacy separation")
+	}
+
+	// Store raw content in separate table
+	if err := sqlStore.StoreReflectionContent(ctx, db.StoreReflectionContentParams{
+		ContentHash:      contentHash,
+		PromptContent:    "{}",
+		ResponseText:     &responseText,
+		ResponseMediaUrl: responseMediaURL,
+	}); err != nil {
+		return err
+	}
+
+	// Update reflections table with content hash and generate summary
+	summaryText := ""
+	if responseText != "" {
+		summaryText = fmt.Sprintf("summary: %s", strings.TrimSpace(responseText[:min(100, len(responseText))]))
+	} else if responseMediaURL != nil && *responseMediaURL != "" {
+		summaryText = "summary: media_response_stored"
+	}
+
+	retentionExpiresAt := pgtype.Timestamptz{
+		Time:  time.Now().UTC().AddDate(0, 0, 30),
+		Valid: true,
+	}
+
+	if err := sqlStore.UpdateReflectionWithPrivacy(ctx, db.UpdateReflectionWithPrivacyParams{
+		ID:                 reflectionID,
+		ContentHash:        contentHash,
+		ResponseSummary:    pgtype.Text{String: summaryText, Valid: true},
+		RetentionExpiresAt: retentionExpiresAt,
+	}); err != nil {
+		return err
+	}
+
+	return nil
+}
+
+func min(a, b int) int {
+	if a < b {
+		return a
+	}
+	return b
 }
