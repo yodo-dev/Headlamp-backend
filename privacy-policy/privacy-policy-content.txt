@@ -1,0 +1,296 @@
+Privacy Policy for Headlamp for Families
+Effective Date: January 23, 2026
+Headlamp For Families (“Headlamp,” “we,” “our,” or “us”) respects your privacy and is committed to protecting the trust, safety, and personal information of the families who use our mobile application, Headlamp for Families (“the App”).
+This Privacy Policy explains what information we collect, what we do not collect, how we use information, how long we retain information, and what rights parents, legal guardians, and users have regarding their information.
+Headlamp for Families is a reflection and coaching tool designed to help parents and their children have healthier conversations about autonomy, attention, readiness, goals, technology use, and family expectations.
+Headlamp is not a monitoring tool.
+Headlamp is not a surveillance app.
+We do not track children’s location, monitor their messages, scan their browsing history, read their social media accounts, or secretly observe their digital activity. Our purpose is to support trust, reflection, coaching, and better family conversations.
+By using the App, you acknowledge and agree to the practices described in this Privacy Policy.
+1. Who This Policy Applies To
+This Privacy Policy applies to:
+Parents or legal guardians who create and manage a Headlamp account
+Minors who use the App under the supervision and approval of a parent or legal guardian
+Other authorized family members who participate in a family account
+The App is intended for use in a family context. A parent or legal guardian must initiate account registration and approve participation by any minor.
+Children under the age of 13 may not use the App unless a parent or legal guardian has provided verifiable parental consent. Consent may be obtained through parent account creation, email verification, and explicit approval within the App before a child participates.
+Parents and legal guardians are responsible for deciding whether the App is appropriate for their child and for managing their family’s use of the App.
+2. Our Privacy Commitments
+Headlamp is built around a simple principle: families should be supported, not surveilled.
+We make the following commitments:
+We do not sell personal information.
+We do not rent personal information.
+We do not use personal information for targeted advertising.
+We do not collect personal data from a child’s reflection responses.
+We do not store child reflection responses in a way that can reasonably identify the child.
+We do not use a child’s reflection responses to build behavioral profiles.
+We do not use a child’s reflection responses for advertising.
+We do not use a child’s reflection responses to train artificial intelligence models.
+We do not monitor text messages, emails, calls, web browsing, social media, photos, videos, or location.
+We do not secretly monitor children.
+We do not provide diagnostic, medical, therapeutic, or mental health services.
+Headlamp is designed to help families build trust, clarity, confidence, and better conversations.
+3. Information We Collect From Parents or Legal Guardians
+When a parent or legal guardian creates or manages an account, we may collect limited information such as:
+First name, chosen name, or username
+Email address
+Password or authentication credentials
+Account settings and preferences
+Family account configuration
+Consent records related to a minor’s participation
+Communications with our support team
+Basic usage and technical information related to the parent account
+We use this information to create and manage accounts, verify parental consent, provide the App, respond to support requests, maintain security, and communicate important service updates.
+4. Information We Collect About Minors
+With parent or guardian approval, we may collect limited information about minors only as needed to provide the App.
+This may include:
+First name, nickname, or chosen display name
+Age range or general age category
+Family account relationship, such as child, teen, or dependent
+Parent-approved settings related to the minor’s use of the App
+Basic activity information, such as whether an activity was opened, started, completed, or skipped
+We do not require a minor to provide:
+Full legal name
+Precise date of birth
+Home address
+Phone number
+School name
+Government identification
+Medical information
+Counseling or therapy records
+5. Child Reflection Responses
+Headlamp may invite minors to respond to reflection prompts, readiness questions, goal-setting exercises, coaching activities, or other guided reflection experiences.
+We want to be very clear:
+Headlamp does not collect personal data from a child’s reflection responses.
+Child reflection responses are only stored in a way that cannot reasonably identify the child.
+This means:
+We do not store a child’s reflection responses with the child’s name, email address, account identity, or direct personal identifiers.
+We do not use a child’s reflection responses to identify the child.
+We do not sell, rent, or share a child’s reflection responses.
+We do not use a child’s reflection responses for targeted advertising.
+We do not use a child’s reflection responses to build behavioral advertising profiles.
+We do not use a child’s reflection responses to train AI models.
+We do not allow Headlamp staff to routinely review individual child reflection responses.
+We do not share child reflection responses with schools, employers, advertisers, data brokers, or unrelated third parties.
+Depending on how the App is configured, a child’s responses may be processed to generate an in-app experience, such as a reflection summary, family conversation prompt, coaching insight, readiness snapshot, or goal-setting guide. This processing is used only to provide the feature requested by the family.
+Headlamp is not designed to use children’s reflections as a record of behavior, discipline, risk scoring, surveillance, diagnosis, or evaluation.
+Parents and minors should avoid entering highly sensitive information into reflection prompts, including passwords, financial information, precise location, medical records, therapy records, details about abuse, or emergency information. Headlamp is not a crisis response tool.
+6. What We Do Not Collect
+Headlamp is not designed to be a device monitoring, location tracking, parental control, or surveillance app.
+We do not collect:
+Precise GPS location
+Real-time location history
+Text messages
+Call logs
+Emails
+Browser history
+Search history
+Social media account content
+Device contacts
+Photos from the device
+Videos from the device
+Microphone recordings
+Camera recordings
+Screen recordings
+Keystrokes
+App usage from outside Headlamp
+Payment card information directly through the App
+School records
+Medical records
+Therapy or counseling records
+Biometric identifiers
+Government identification numbers
+If future versions of the App introduce materially different data practices, we will update this Privacy Policy and provide additional notice or consent where required.
+7. Device, Technical, and Usage Information
+We may collect limited technical information to operate, secure, and improve the App, such as:
+Device type
+Operating system
+App version
+Crash reports
+Error logs
+General feature usage
+Authentication and security logs
+Approximate region based on technical signals, if needed for security or compliance
+We use this information to troubleshoot errors, improve performance, prevent misuse, understand product usage, and maintain the security of the App.
+8. Analytics and Product Improvement
+We may use analytics tools, including PostHog, to understand how families use the App and how we can improve the experience.
+Analytics may include information such as:
+Which features are used
+How often features are used
+Whether a feature is completed
+Where users encounter errors
+General app performance data
+We do not intentionally send PostHog children’s written reflection responses, names, emails, or direct personal identifiers.
+Analytics data is used to improve product design, usability, reliability, and family experience. It is not used for targeted advertising, surveillance, or child profiling.
+We require analytics and service providers to process information only for authorized purposes and under appropriate data protection agreements.
+9. How We Use Information
+We use information to:
+Provide and operate the App
+Create and manage parent accounts
+Verify parental consent
+Support family account setup
+Enable parent-approved participation by minors
+Provide reflection, readiness, coaching, and goal-setting features
+Generate in-app conversation support requested by the family
+Improve usability, reliability, and product design
+Troubleshoot technical problems
+Respond to support requests
+Maintain safety and security
+Prevent fraud, abuse, or misuse
+Comply with legal obligations
+We do not use personal information to make automated decisions that have legal or similarly significant effects.
+We do not use children’s personal information for advertising or commercial profiling.
+10. AI-Assisted Features
+Some features in the App may use automated or AI-assisted systems to generate prompts, summaries, reflections, coaching suggestions, or conversation starters.
+These features are designed to:
+Support self-awareness
+Encourage family conversation
+Help parents and minors reflect on goals, readiness, autonomy, attention, and technology use
+Suggest language that may make difficult conversations easier
+Provide coaching-style prompts that support reflection and growth
+These features are not designed to:
+Diagnose medical, psychological, educational, or behavioral conditions
+Make judgments about a child or family
+Predict a child’s future behavior
+Replace therapy, counseling, medical care, coaching, or professional evaluation
+Make legal, educational, employment, housing, financial, or similarly significant decisions
+We do not use a child’s reflection responses to train AI models.
+We do not use AI to profile children for advertising or behavioral targeting.
+AI-assisted outputs are for informational, developmental, and coaching purposes only. Families should use their own judgment and seek qualified professional support when needed.
+11. Developmental and Coaching-Oriented, Not Diagnostic
+The App may provide prompts, summaries, readiness snapshots, goals, coaching suggestions, or conversation guides.
+These are intended for developmental awareness, reflection, coaching, and family conversation only.
+They are not medical, psychological, therapeutic, educational, or diagnostic assessments.
+They should not be used as a substitute for professional evaluation, medical advice, mental health treatment, therapy, counseling, educational assessment, or crisis support.
+If a parent, guardian, or minor is concerned about immediate safety, self-harm, abuse, mental health, or a crisis situation, they should contact emergency services, a qualified professional, or an appropriate crisis support resource.
+12. Children’s Privacy and Parental Rights
+We comply with the Children’s Online Privacy Protection Act, or COPPA, and other applicable children’s privacy laws.
+For children under 13:
+A parent or legal guardian must create or authorize the account.
+A parent or legal guardian must provide verifiable parental consent before the child participates.
+We do not knowingly collect personal information from children under 13 without required parental consent.
+Parents may review personal information associated with their child’s account.
+Parents may request correction or deletion of their child’s personal information.
+Parents may revoke consent at any time.
+Parents may request that we stop collecting further personal information from their child.
+To exercise parental rights, contact us at:
+hello@headlampforfamilies.com
+13. Family Visibility and Child Privacy
+Headlamp is designed to support trust-building conversations between parents and minors.
+The App may allow parents to see certain account-level or activity-level information, such as whether a minor opened, started, completed, or skipped an activity.
+The App may also generate family-facing summaries, conversation prompts, coaching insights, or readiness snapshots based on participation in guided activities.
+However, Headlamp is not intended to be used for hidden monitoring, discipline, punishment, surveillance, or secret observation.
+The App should clearly communicate:
+What information a parent can see
+What information a minor can see
+Whether a response is private, shared, or used to generate a family-facing prompt
+Whether a child will be notified before something is shared
+Whether parents can change visibility settings
+Our goal is to support honest reflection and healthier conversations, not to create a hidden record of a child’s thoughts or behavior.
+14. Sharing and Disclosure
+We may share limited information only in the following circumstances.
+A. Service Providers
+We may share limited information with trusted service providers who help us operate, secure, analyze, or improve the App.
+These may include:
+Hosting providers
+Analytics providers
+Authentication tools
+Customer support systems
+Security vendors
+Technical infrastructure providers
+Service providers are permitted to use information only to provide services to Headlamp and must protect the information under appropriate contractual obligations.
+B. Parent or Guardian Authorization
+We may share information when a parent or legal guardian explicitly authorizes us to do so.
+We do not share individual family or child information with schools, educators, coaches, employers, institutions, advertisers, or unrelated third parties unless explicitly authorized by a parent or required by law.
+C. Legal, Safety, or Security Reasons
+We may disclose information when we believe it is reasonably necessary to:
+Comply with law, subpoena, court order, or government request
+Enforce our terms or policies
+Protect the rights, safety, or property of Headlamp, our users, or the public
+Investigate fraud, abuse, security incidents, or technical issues
+Respond to a potential emergency or safety concern
+D. Business Transfers
+If Headlamp is involved in a merger, acquisition, financing, reorganization, bankruptcy, or sale of assets, user information may be transferred as part of that transaction.
+If this happens, we will provide notice as required by law.
+15. Data Retention
+We retain information only for as long as reasonably necessary to provide the App, comply with legal obligations, resolve disputes, enforce agreements, maintain security, and support family accounts.
+Our retention practices are as follows:
+Parent Account Information
+Parent account information, including name, email address, account settings, and authentication information, is retained while the account is active.
+If a parent closes the account or requests deletion, parent account information will be deleted or de-identified within 30 days, unless we are legally required or permitted to retain it longer.
+Minor Profile Information
+Minor profile information, such as first name, nickname, age range, family relationship, and parent-approved settings, is retained while the family account is active and parental consent remains in place.
+If a parent revokes consent, removes a minor profile, closes the family account, or requests deletion, minor profile information will be deleted or de-identified within 30 days, unless we are legally required or permitted to retain it longer.
+Child Reflection Responses
+Child reflection responses are not stored in a way that can reasonably identify the child.
+Any child reflection data used to generate an in-app coaching insight, summary, readiness snapshot, or conversation prompt is retained only as long as needed to provide that feature.
+Where temporary processing is required, reflection response data is deleted or de-identified within 24 hours after the feature is provided, unless the family chooses to save a resulting non-identifying summary or prompt within the App.
+Family-Facing Summaries, Prompts, or Coaching Insights
+Family-facing summaries, prompts, readiness snapshots, or coaching insights may be retained in the family account if the parent or family chooses to save them.
+Saved family-facing content is retained while the family account is active.
+If the family deletes saved content, closes the account, or requests deletion, the content will be deleted or de-identified within 30 days, unless we are legally required or permitted to retain it longer.
+Parental Consent Records
+Records of parental consent may be retained for up to 3 years after the account is closed or consent is revoked, unless a longer retention period is required by law.
+These records are retained only to demonstrate compliance with legal obligations.
+Support Communications
+Support emails, requests, and related communications may be retained for up to 2 years after the last interaction, unless a longer period is needed to resolve a dispute, comply with law, or protect the safety and security of users.
+Technical Logs and Security Records
+Technical logs, authentication logs, crash reports, and security records are retained for up to 12 months, unless a longer period is needed to investigate security incidents, prevent fraud or abuse, comply with law, or maintain the integrity of the App.
+Analytics Data
+Analytics data is retained for up to 24 months.
+Where possible, analytics data is aggregated, de-identified, or minimized before retention.
+Analytics data is not used for targeted advertising, surveillance, or child profiling.
+Legal and Compliance Records
+Certain records may be retained for longer when necessary to comply with legal obligations, resolve disputes, enforce agreements, respond to lawful requests, or protect the rights, safety, and security of Headlamp, users, or the public.
+Parents may request deletion of their family’s data by contacting:
+hello@headlampforfamilies.com
+Once verified, we will delete or de-identify the relevant information according to the timelines described above, unless we are legally required or permitted to retain it.
+16. Security
+We take commercially reasonable steps to protect the confidentiality, integrity, and security of information, including:
+Encryption of data in transit
+Secure hosting environments
+Access controls
+Authentication safeguards
+Audit logging
+Limited internal access based on role and need
+Monitoring for errors, misuse, and security issues
+Vendor security review where appropriate
+No system is completely secure. While we work to protect information, we cannot guarantee absolute security.
+Parents and guardians are responsible for maintaining the confidentiality of their login credentials and ensuring that their account email is accurate.
+If you believe your account has been compromised, contact us at:
+hello@headlampforfamilies.com
+17. Your Privacy Rights
+Depending on your jurisdiction, you may have the right to:
+Access personal information
+Request correction of inaccurate information
+Request deletion of personal information
+Request a copy of personal information
+Object to or restrict certain processing
+Revoke consent where processing is based on consent
+Opt out of certain data sharing where applicable
+Parents and legal guardians may exercise applicable rights on behalf of their minor child.
+To exercise these rights, contact:
+hello@headlampforfamilies.com
+We may need to verify your identity and authority before fulfilling a request.
+18. California Privacy Rights
+If you are a California resident, you may have additional privacy rights under California law.
+We do not sell personal information.
+We do not knowingly sell or share personal information of minors under 16.
+We do not use children’s personal information for cross-context behavioral advertising.
+We do not use child reflection responses for advertising, behavioral profiling, or surveillance.
+To exercise California privacy rights, contact:
+hello@headlampforfamilies.com
+19. International Users
+Headlamp for Families is currently intended for use in the United States.
+If you access the App from outside the United States, you understand that information may be processed in the United States or other countries where our service providers operate.
+If Headlamp expands internationally, this Privacy Policy should be updated to address applicable international privacy laws, including GDPR, UK GDPR, and other applicable privacy frameworks.
+20. Changes to This Policy
+We may update this Privacy Policy from time to time to reflect changes in technology, law, product features, or our data practices.
+When we update this Privacy Policy, we will update the Effective Date at the top of the page.
+If we make material changes, we will provide notice through email, in-app notification, or another reasonable method.
+If changes materially affect how we collect, use, store, or disclose children’s personal information, we will obtain updated parental consent where required by law.
+21. Contact Us
+If you have questions about this Privacy Policy or our data practices, contact us at:
+Headlamp For Families
+ Email: hello@headlampforfamilies.com
+

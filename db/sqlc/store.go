@@ -72,6 +72,10 @@ type Store interface {
 	ListActiveUserSegments(ctx context.Context, personID string) ([]UserSegmentRecord, error)
 	ExpireUserSegment(ctx context.Context, personID, segmentName string) error
 	CreateCustomerIOAttribution(ctx context.Context, arg CreateCustomerIOAttributionParams) (CustomerIOAttributionRecord, error)
+
+	// ── Static public content ────────────────────────────────────────────────
+	UpsertPrivacyPolicyDocument(ctx context.Context, arg UpsertPrivacyPolicyDocumentParams) (PrivacyPolicyDocument, error)
+	GetPrivacyPolicyDocumentByKey(ctx context.Context, documentKey string) (PrivacyPolicyDocument, error)
 }
 
 // QuizAnswer defines the structure for a single answer submission.

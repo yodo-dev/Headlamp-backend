@@ -73,6 +73,53 @@ server:
 mock:
 	mockgen -package mockdb -destination db/mock/store.go github.com/The-You-School-HeadLamp/headlamp_backend/db/sqlc Store
 
+seed-strapi-quizzes-dry-run:
+	python3 db/seeders/strapi_course_quiz_seeder.py \
+		--manifest db/seeders/strapi_course_quiz_manifest.json \
+		--env-file app.development.env \
+		--mode quizzes-only \
+		--resolve-modules-by-title \
+		--dry-run
+
+seed-strapi-quizzes:
+	python3 db/seeders/strapi_course_quiz_seeder.py \
+		--manifest db/seeders/strapi_course_quiz_manifest.json \
+		--env-file app.development.env \
+		--mode quizzes-only \
+		--resolve-modules-by-title
+
+seed-strapi-list-modules:
+	python3 db/seeders/strapi_course_quiz_seeder.py \
+		--manifest db/seeders/strapi_course_quiz_manifest.json \
+		--env-file app.development.env \
+		--list-modules
+
+seed-social-course-dry-run:
+	python3 db/seeders/strapi_course_quiz_seeder.py \
+		--env-file app.development.env \
+		--seed-social-from-assets "courses-assets/SocialMediaCourse-Headlamp" \
+		--training-course-text "Social Media Driver's Training Course" \
+		--training-course-description "Structured social media training course" \
+		--social-course-title "Social Media Driver's Training Course" \
+		--social-course-description "Structured social media training course" \
+		--reuse-training-course-if-exists \
+		--reuse-course-if-exists \
+		--dry-run
+
+seed-social-course:
+	python3 db/seeders/strapi_course_quiz_seeder.py \
+		--env-file app.development.env \
+		--seed-social-from-assets "courses-assets/SocialMediaCourse-Headlamp" \
+		--training-course-text "Social Media Driver's Training Course" \
+		--training-course-description "Structured social media training course" \
+		--social-course-title "Social Media Driver's Training Course" \
+		--social-course-description "Structured social media training course" \
+		--reuse-training-course-if-exists \
+		--reuse-course-if-exists
+
+seed-privacy-policy:
+	go run ./db/seeders/privacy_policy_seeder.go -file privacy-policy/privacy-policy-content.txt
+
 zookeeper:
 	docker run --name zookeeper --network assignme \
 		-p 2181:2181 \
@@ -91,4 +138,4 @@ kafka:
 		-e KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR=1 \
 		-d confluentinc/cp-kafka:latest
 
-.PHONY: network postgres createdb dropdb migrate migrateup migratedown up down migrateup1 migratedown1 new_migration db_docs db_schema sqlc test server mock zookeeper kafka
+.PHONY: network postgres createdb dropdb migrate migrateup migratedown up down migrateup1 migratedown1 new_migration db_docs db_schema sqlc test server mock zookeeper kafka seed-strapi-quizzes-dry-run seed-strapi-quizzes seed-strapi-list-modules seed-social-course-dry-run seed-social-course seed-privacy-policy

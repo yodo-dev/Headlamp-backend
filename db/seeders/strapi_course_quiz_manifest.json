@@ -1,0 +1,86 @@
+{
+  "defaults": {
+    "quiz_type": "scored",
+    "format": "single-choice",
+    "passing_score": 80,
+    "estimated_completion_time_in_mins": 20
+  },
+  "courses": [
+    {
+      "course_key": "digital_permit",
+      "title": "Digital Permit Course",
+      "course_document_id": "",
+      "modules": []
+    },
+    {
+      "course_key": "social_media",
+      "title": "Social Media Driver's Training Course",
+      "course_document_id": "",
+      "modules": [
+        {
+          "title": "01 Getting Ready to Drive",
+          "type": "course",
+          "module_document_id": "",
+          "quiz_docx_path": "courses-assets/SocialMediaCourse-Headlamp/01 Getting Ready to Drive/Module 01 Quiz.docx",
+          "quiz": {
+            "title": "Social Media Module 01 Quiz"
+          }
+        },
+        {
+          "title": "02 The Rules of the Road",
+          "type": "course",
+          "module_document_id": "",
+          "quiz_docx_path": "courses-assets/SocialMediaCourse-Headlamp/02 The Rules of the Road/Module 02 Quiz.docx",
+          "quiz": {
+            "title": "Social Media Module 02 Quiz"
+          }
+        },
+        {
+          "title": "03 Driving Skills",
+          "type": "course",
+          "module_document_id": "",
+          "quiz_docx_path": "courses-assets/SocialMediaCourse-Headlamp/03 Driving Skills/Module 03 Quiz.docx",
+          "quiz": {
+            "title": "Social Media Module 03 Quiz"
+          }
+        },
+        {
+          "title": "04 Safe Driving Habits",
+          "type": "course",
+          "module_document_id": "",
+          "quiz_docx_path": "courses-assets/SocialMediaCourse-Headlamp/04 Safe Driving Habits/Module 04 Quiz.docx",
+          "quiz": {
+            "title": "Social Media Module 04 Quiz"
+          }
+        },
+        {
+          "title": "05 Defensive Driving",
+          "type": "course",
+          "module_document_id": "",
+          "quiz_docx_path": "courses-assets/SocialMediaCourse-Headlamp/05 Defensive Driving/Module 05 Quiz.docx",
+          "quiz": {
+            "title": "Social Media Module 05 Quiz"
+          }
+        },
+        {
+          "title": "06 When Things Go Wrong",
+          "type": "course",
+          "module_document_id": "",
+          "quiz_docx_path": "courses-assets/SocialMediaCourse-Headlamp/06 When Things Go Wrong/Module 06 Quiz.docx",
+          "quiz": {
+            "title": "Social Media Module 06 Quiz"
+          }
+        },
+        {
+          "title": "07 The Open Road",
+          "type": "course",
+          "module_document_id": "",
+          "quiz_docx_path": "courses-assets/SocialMediaCourse-Headlamp/07 The Open Road/Module 07 Quiz.docx",
+          "quiz": {
+            "title": "Social Media Module 07 Quiz"
+          }
+        }
+      ]
+    }
+  ]
+}
