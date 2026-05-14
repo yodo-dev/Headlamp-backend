@@ -5,10 +5,8 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
 	"net/http"
 	"strconv"
-	"strings"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -25,43 +23,11 @@ import (
 // to call from background goroutines where no HTTP response writer is available.
 
 func (server *Server) fetchAllCoursesForUnlock(ctx context.Context) ([]extCourseItem, error) {
-	base := strings.TrimRight(server.config.ExternalContentBaseURL, "/")
-	if base == "" {
-		return nil, fmt.Errorf("external content base URL not configured")
-	}
-
-	reqURL := fmt.Sprintf("%s/api/courses", base)
-
-	timeout := server.config.ExternalRequestTimeout
-	if timeout <= 0 {
-		timeout = 10 * time.Second
-	}
-	client := &http.Client{Timeout: timeout}
-
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, reqURL, nil)
+	courses, err := server.fetchExternalCoursesByTrainingCourseText(ctx, trainingCourseTextSocialMedia)
 	if err != nil {
-		return nil, fmt.Errorf("failed to build courses request: %w", err)
+		return nil, fmt.Errorf("fetch social media courses: %w", err)
 	}
-	if server.config.ExternalContentToken != "" {
-		req.Header.Set("Authorization", "Bearer "+server.config.ExternalContentToken)
-	}
-
-	resp, err := client.Do(req)
-	if err != nil {
-		return nil, fmt.Errorf("external courses request failed: %w", err)
-	}
-	defer resp.Body.Close()
-
-	body, _ := io.ReadAll(resp.Body)
-	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("external courses returned status %d", resp.StatusCode)
-	}
-
-	var extResp extAllCoursesResponse
-	if err := json.Unmarshal(body, &extResp); err != nil {
-		return nil, fmt.Errorf("failed to parse courses response: %w", err)
-	}
-	return extResp.Data, nil
+	return courses, nil
 }
 
 // ─── ensureUnlockSystemSeeded ────────────────────────────────────────────────
@@ -105,6 +71,42 @@ func (server *Server) ensureUnlockSystemSeeded(ctx context.Context, childID stri
 			Status:      status,
 		}); err != nil {
 			return fmt.Errorf("upsert course unlock %s: %w", course.DocumentID, err)
+		}
+	}
+
+	// Reconcile legacy rows: if no social course is currently unlocked/completed,
+	// unlock the first social course so progression can start.
+	if len(courses) > 0 {
+		socialCourseIDSet := make(map[string]struct{}, len(courses))
+		for _, course := range courses {
+			socialCourseIDSet[course.DocumentID] = struct{}{}
+		}
+
+		existingUnlocks, err := server.store.GetChildCourseUnlocks(ctx, childID)
+		if err != nil {
+			return fmt.Errorf("get child course unlocks for reconciliation: %w", err)
+		}
+
+		hasProgressionEntry := false
+		for _, entry := range existingUnlocks {
+			if _, ok := socialCourseIDSet[entry.CourseID]; !ok {
+				continue
+			}
+			if entry.Status == db.CourseStatusUnlocked || entry.Status == db.CourseStatusCompleted {
+				hasProgressionEntry = true
+				break
+			}
+		}
+
+		if !hasProgressionEntry {
+			firstSocialCourseID := courses[0].DocumentID
+			if _, err := server.store.UpdateChildCourseUnlockStatus(ctx, db.UpdateChildCourseUnlockStatusParams{
+				ChildID:  childID,
+				CourseID: firstSocialCourseID,
+				Status:   db.CourseStatusUnlocked,
+			}); err != nil {
+				return fmt.Errorf("reconcile first social course unlock %s: %w", firstSocialCourseID, err)
+			}
 		}
 	}
 

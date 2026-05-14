@@ -120,6 +120,9 @@ seed-social-course:
 seed-privacy-policy:
 	go run ./db/seeders/privacy_policy_seeder.go -file privacy-policy/privacy-policy-content.txt
 
+seed-content-topics:
+	go run ./db/seeders/content_topics_seeder
+
 zookeeper:
 	docker run --name zookeeper --network assignme \
 		-p 2181:2181 \
@@ -138,4 +141,4 @@ kafka:
 		-e KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR=1 \
 		-d confluentinc/cp-kafka:latest
 
-.PHONY: network postgres createdb dropdb migrate migrateup migratedown up down migrateup1 migratedown1 new_migration db_docs db_schema sqlc test server mock zookeeper kafka seed-strapi-quizzes-dry-run seed-strapi-quizzes seed-strapi-list-modules seed-social-course-dry-run seed-social-course seed-privacy-policy
+.PHONY: network postgres createdb dropdb migrate migrateup migratedown up down migrateup1 migratedown1 new_migration db_docs db_schema sqlc test server mock zookeeper kafka seed-strapi-quizzes-dry-run seed-strapi-quizzes seed-strapi-list-modules seed-social-course-dry-run seed-social-course seed-privacy-policy seed-content-topics

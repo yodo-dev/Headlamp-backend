@@ -76,6 +76,9 @@ type Store interface {
 	// ── Static public content ────────────────────────────────────────────────
 	UpsertPrivacyPolicyDocument(ctx context.Context, arg UpsertPrivacyPolicyDocumentParams) (PrivacyPolicyDocument, error)
 	GetPrivacyPolicyDocumentByKey(ctx context.Context, documentKey string) (PrivacyPolicyDocument, error)
+	UpsertContentTopicDocument(ctx context.Context, arg UpsertContentTopicDocumentParams) (ContentTopicDocument, error)
+	ListContentTopicDocumentsByCategory(ctx context.Context, category string) ([]ContentTopicDocument, error)
+	GetContentTopicDocumentByCategoryAndTopicKey(ctx context.Context, category string, topicKey string) (ContentTopicDocument, error)
 }
 
 // QuizAnswer defines the structure for a single answer submission.

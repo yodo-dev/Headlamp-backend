@@ -404,7 +404,7 @@ func (server *Server) buildTrainingHome(ctx context.Context, childID, role, chil
 }
 
 func (server *Server) loadDigitalPermitModules(ctx context.Context, childID string) ([]flattenedTrainingModule, error) {
-	allCourses, err := server.fetchAllCoursesForUnlock(ctx)
+	allCourses, err := server.fetchExternalCoursesByTrainingCourseText(ctx, trainingCourseTextDigitalPermit)
 	if err != nil {
 		return nil, err
 	}
@@ -611,19 +611,32 @@ func (server *Server) loadSocialDriverModules(ctx context.Context, childID strin
 	})
 
 	titles := make(map[string]string)
+	allowedCourseIDs := make(map[string]struct{})
 	courses, err := server.fetchAllCoursesForUnlock(ctx)
-	if err == nil {
-		for _, course := range courses {
-			titles[course.DocumentID] = course.Title
-		}
+	if err != nil {
+		return nil, false, err
+	}
+	for _, course := range courses {
+		allowedCourseIDs[course.DocumentID] = struct{}{}
+		titles[course.DocumentID] = course.Title
 	}
 
 	socialCourses := make([]db.ChildCourseUnlock, 0)
 	for _, item := range courseUnlocks {
-		if item.CourseOrder > 0 {
+		if item.CourseOrder >= 0 {
+			if _, ok := allowedCourseIDs[item.CourseID]; !ok {
+				continue
+			}
 			socialCourses = append(socialCourses, item)
 		}
 	}
+
+	sort.SliceStable(socialCourses, func(i, j int) bool {
+		if socialCourses[i].CourseOrder != socialCourses[j].CourseOrder {
+			return socialCourses[i].CourseOrder < socialCourses[j].CourseOrder
+		}
+		return socialCourses[i].CourseID < socialCourses[j].CourseID
+	})
 
 	if len(socialCourses) == 0 {
 		return []trainingModuleResponse{}, false, nil
@@ -910,7 +923,7 @@ func (server *Server) buildSocialTrainingStage(summary trainingStateSummary, mod
 		stage.Status = trainingStatusAvailable
 	} else {
 		stage.Status = trainingStatusLocked
-		stage.LockReason = trainingSocialTrainingLockedReason
+		stage.LockReason = "No social module is unlocked yet"
 		return stage
 	}
 

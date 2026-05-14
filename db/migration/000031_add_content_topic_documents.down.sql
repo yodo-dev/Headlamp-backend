@@ -1,0 +1,2 @@
+DROP INDEX IF EXISTS idx_content_topic_documents_category_sort;
+DROP TABLE IF EXISTS content_topic_documents;

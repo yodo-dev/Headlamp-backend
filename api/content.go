@@ -120,6 +120,24 @@ type extPagination struct {
 	Total     int `json:"total"`
 }
 
+const (
+	trainingCourseTextDigitalPermit = "Digital Driver's License"
+	trainingCourseTextSocialMedia   = "Social Media Driver's Training Course"
+)
+
+type extTrainingCourseListResponse struct {
+	Data []extTrainingCourse `json:"data"`
+	Meta extMeta             `json:"meta"`
+}
+
+type extTrainingCourse struct {
+	ID          int64           `json:"id"`
+	DocumentID  string          `json:"documentId"`
+	Text        string          `json:"text"`
+	Description string          `json:"description"`
+	Courses     []extCourseItem `json:"courses"`
+}
+
 type extCourse struct {
 	ID          int64             `json:"id"`
 	DocumentID  string            `json:"documentId"`
@@ -1832,27 +1850,35 @@ func (server *Server) getLatestCourseForChild(ctx *gin.Context) {
 }
 
 func (server *Server) fetchAllExternalCourses(ctx *gin.Context) ([]extCourseItem, error) {
+	courses, err := server.fetchExternalCoursesByTrainingCourseText(context.Background(), trainingCourseTextDigitalPermit)
+	if err != nil {
+		log.Error().Err(err).Msg("failed to fetch digital permit courses")
+		ctx.JSON(http.StatusBadGateway, gin.H{"error": "failed fetching digital permit courses"})
+		return nil, err
+	}
+	return courses, nil
+}
+
+func (server *Server) fetchExternalCoursesByTrainingCourseText(ctx context.Context, trainingCourseText string) ([]extCourseItem, error) {
 	base := strings.TrimRight(server.config.ExternalContentBaseURL, "/")
 	if base == "" {
-		ctx.JSON(http.StatusInternalServerError, gin.H{"error": "external content base URL not configured"})
 		return nil, fmt.Errorf("external content base URL not configured")
 	}
 
-	coursesURL, err := url.Parse(fmt.Sprintf("%s/api/courses", base))
+	trainingCoursesURL, err := url.Parse(fmt.Sprintf("%s/api/training-courses", base))
 	if err != nil {
-		log.Error().Err(err).Msg("failed to parse external courses url")
-		ctx.JSON(http.StatusInternalServerError, errorResponse(err))
+		log.Error().Err(err).Msg("failed to parse external training-courses url")
 		return nil, err
 	}
 
-	// Fetch only published content and request a stable sequence from Strapi.
-	q := coursesURL.Query()
+	q := trainingCoursesURL.Query()
+	q.Set("filters[text][$eq]", trainingCourseText)
 	q.Set("publicationState", "live")
-	q.Set("sort[0]", "publishedAt:asc")
-	q.Set("sort[1]", "createdAt:asc")
-	coursesURL.RawQuery = q.Encode()
+	q.Set("populate[0]", "courses")
+	q.Set("publicationState", "live")
+	trainingCoursesURL.RawQuery = q.Encode()
 
-	reqURL := coursesURL.String()
+	reqURL := trainingCoursesURL.String()
 
 	timeout := server.config.ExternalRequestTimeout
 	if timeout <= 0 {
@@ -1860,10 +1886,9 @@ func (server *Server) fetchAllExternalCourses(ctx *gin.Context) ([]extCourseItem
 	}
 	client := &http.Client{Timeout: timeout}
 
-	req, err := http.NewRequestWithContext(context.Background(), http.MethodGet, reqURL, nil)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, reqURL, nil)
 	if err != nil {
-		log.Error().Err(err).Msg("failed to build external request for all courses")
-		ctx.JSON(http.StatusInternalServerError, errorResponse(err))
+		log.Error().Err(err).Msg("failed to build external request for training courses")
 		return nil, err
 	}
 	if server.config.ExternalContentToken != "" {
@@ -1872,30 +1897,34 @@ func (server *Server) fetchAllExternalCourses(ctx *gin.Context) ([]extCourseItem
 
 	resp, err := client.Do(req)
 	if err != nil {
-		log.Error().Err(err).Str("url", reqURL).Msg("external all courses request failed")
-		ctx.JSON(http.StatusBadGateway, errorResponse(err))
+		log.Error().Err(err).Str("url", reqURL).Msg("external training-courses request failed")
 		return nil, err
 	}
 	defer resp.Body.Close()
 
 	body, _ := io.ReadAll(resp.Body)
 	if resp.StatusCode != http.StatusOK {
-		log.Error().Int("status", resp.StatusCode).Str("body", string(body)).Msg("external all courses non-200")
-		ctx.JSON(http.StatusBadGateway, gin.H{"error": "failed fetching all courses", "status": resp.StatusCode})
-		return nil, fmt.Errorf("failed fetching all courses")
+		log.Error().Int("status", resp.StatusCode).Str("body", string(body)).Msg("external training-courses non-200")
+		return nil, fmt.Errorf("failed fetching training-courses")
 	}
 
-	var extResp extAllCoursesResponse
+	var extResp extTrainingCourseListResponse
 	if err := json.Unmarshal(body, &extResp); err != nil {
-		log.Error().Err(err).Msg("failed to parse external all courses response")
-		ctx.JSON(http.StatusBadGateway, errorResponse(err))
+		log.Error().Err(err).Msg("failed to parse external training-courses response")
 		return nil, err
 	}
 
+	if len(extResp.Data) == 0 {
+		log.Warn().Str("training_course_text", trainingCourseText).Msg("no training course found")
+		return []extCourseItem{}, nil
+	}
+
+	courses := extResp.Data[0].Courses
+
 	// Keep sequence deterministic even if provider ordering changes unexpectedly.
-	sort.SliceStable(extResp.Data, func(i, j int) bool {
-		left := extResp.Data[i]
-		right := extResp.Data[j]
+	sort.SliceStable(courses, func(i, j int) bool {
+		left := courses[i]
+		right := courses[j]
 
 		if !left.PublishedAt.Equal(right.PublishedAt) {
 			return left.PublishedAt.Before(right.PublishedAt)
@@ -1909,7 +1938,7 @@ func (server *Server) fetchAllExternalCourses(ctx *gin.Context) ([]extCourseItem
 		return left.DocumentID < right.DocumentID
 	})
 
-	return extResp.Data, nil
+	return courses, nil
 }
 
 func (server *Server) fetchExternalCourseData(_ *gin.Context, courseID string) (*extCourse, error) {

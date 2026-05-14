@@ -174,6 +174,8 @@ func (server *Server) setupRouter() {
 	// Public routes
 	v1.POST("/child/link-code/verify", server.verifyLinkCode)
 	v1.GET("/privacy-policy", server.getPrivacyPolicy)
+	v1.GET("/content/:category", server.listContentTopics)
+	v1.GET("/content/:category/:topic_key", server.getContentTopicDocument)
 	v1.GET("/mobile/config", server.getMobileConfig)
 	v1.POST("/analytics/identify", server.analyticsIdentify)
 	v1.POST("/analytics/events", server.analyticsEvent)
