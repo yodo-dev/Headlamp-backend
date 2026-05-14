@@ -60,7 +60,7 @@ type Server struct {
 func NewServer(config util.Config, store db.Store, tokenMaker token.Maker, gptClient gpt.GptClient) (*Server, error) {
 	uploader := util.NewUploader(config.ExternalContentBaseURL, config.ExternalContentToken)
 
-	reflectionSvc := service.NewReflectionService(store, gptClient)
+	reflectionSvc := service.NewReflectionService(store, gptClient, config.ReflectionStoreRawResponses, config.ReflectionRawRetentionDays)
 	insightsSvc := service.NewInsightsService(store, gptClient)
 	parentInsightSvc := service.NewParentInsightService(store, gptClient)
 	strapiClient := strapi.NewClient(config.StrapiBaseURL, config.StrapiAPIToken, config.StrapiCDNPrefix, config.ExternalRequestTimeout)
@@ -130,6 +130,10 @@ func NewServer(config util.Config, store db.Store, tokenMaker token.Maker, gptCl
 
 	// Start the background worker for session expiry
 	server.startSessionExpiryWorker()
+
+	if err := server.reflectionService.RunPrivacyMaintenance(context.Background()); err != nil {
+		log.Error().Err(err).Msg("reflection privacy maintenance failed during startup")
+	}
 
 	// Start the daily reflection scheduler
 	if err := server.reflectionScheduler.Start(config.ReflectionCronSchedule); err != nil {

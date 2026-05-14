@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
+	"strings"
 	"time"
 
 	db "github.com/The-You-School-HeadLamp/headlamp_backend/db/sqlc"
@@ -12,6 +13,68 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/rs/zerolog/log"
 )
+
+type reflectionAPIResponse struct {
+	ID              string          `json:"id"`
+	TriggerType     string          `json:"trigger_type"`
+	PromptContent   json.RawMessage `json:"prompt_content"`
+	ResponseSummary string          `json:"response_summary,omitempty"`
+	ResponseType    string          `json:"response_type,omitempty"`
+	RespondedAt     *time.Time      `json:"responded_at,omitempty"`
+	IsAcknowledged  bool            `json:"is_acknowledged"`
+	DeliveredAt     time.Time       `json:"delivered_at"`
+	Metadata        json.RawMessage `json:"metadata,omitempty"`
+	CreatedAt       time.Time       `json:"created_at"`
+	UpdatedAt       time.Time       `json:"updated_at"`
+}
+
+func toReflectionAPIResponse(reflection db.Reflection) reflectionAPIResponse {
+	resp := reflectionAPIResponse{
+		ID:             reflection.ID.String(),
+		TriggerType:    string(reflection.TriggerType),
+		PromptContent:  json.RawMessage(reflection.PromptContent),
+		IsAcknowledged: reflection.IsAcknowledged,
+		DeliveredAt:    reflection.DeliveredAt,
+		Metadata:       json.RawMessage(reflection.Metadata),
+		CreatedAt:      reflection.CreatedAt,
+		UpdatedAt:      reflection.UpdatedAt,
+	}
+
+	if reflection.ResponseType.Valid {
+		resp.ResponseType = string(reflection.ResponseType.ReflectionResponseType)
+	}
+
+	if reflection.RespondedAt.Valid {
+		t := reflection.RespondedAt.Time
+		resp.RespondedAt = &t
+	}
+
+	if reflection.ResponseText.Valid {
+		txt := strings.TrimSpace(reflection.ResponseText.String)
+		if strings.HasPrefix(txt, "summary:") {
+			resp.ResponseSummary = txt
+		} else if txt != "" {
+			resp.ResponseSummary = "summary: redacted_legacy_response"
+		}
+	}
+
+	if !json.Valid(resp.PromptContent) {
+		resp.PromptContent = json.RawMessage([]byte(`{}`))
+	}
+	if len(resp.Metadata) > 0 && !json.Valid(resp.Metadata) {
+		resp.Metadata = json.RawMessage([]byte(`{}`))
+	}
+
+	return resp
+}
+
+func toReflectionAPIResponses(reflections []db.Reflection) []reflectionAPIResponse {
+	out := make([]reflectionAPIResponse, 0, len(reflections))
+	for _, reflection := range reflections {
+		out = append(out, toReflectionAPIResponse(reflection))
+	}
+	return out
+}
 
 // ─── Child: pending reflections ─────────────────────────────────────────────
 
@@ -40,7 +103,7 @@ func (server *Server) getPendingReflections(ctx *gin.Context) {
 		return
 	}
 
-	ctx.JSON(http.StatusOK, gin.H{"reflections": reflections})
+	ctx.JSON(http.StatusOK, gin.H{"reflections": toReflectionAPIResponses(reflections)})
 }
 
 // ─── Child: respond to reflection ───────────────────────────────────────────
@@ -95,7 +158,7 @@ func (server *Server) respondToReflection(ctx *gin.Context) {
 		return
 	}
 
-	ctx.JSON(http.StatusOK, reflection)
+	ctx.JSON(http.StatusOK, toReflectionAPIResponse(*reflection))
 
 	// Notify the parent that their child has responded to a reflection.
 	go server.notifyParentOfReflectionResponse(reflection.ChildID)
@@ -170,7 +233,7 @@ func (server *Server) getReflectionHistory(ctx *gin.Context) {
 		return
 	}
 
-	ctx.JSON(http.StatusOK, gin.H{"reflections": reflections})
+	ctx.JSON(http.StatusOK, gin.H{"reflections": toReflectionAPIResponses(reflections)})
 }
 
 // ─── Child: reflection stats ─────────────────────────────────────────────────
@@ -225,7 +288,7 @@ func (server *Server) getChildReflectionsForParent(ctx *gin.Context) {
 		return
 	}
 
-	ctx.JSON(http.StatusOK, gin.H{"reflections": reflections})
+	ctx.JSON(http.StatusOK, gin.H{"reflections": toReflectionAPIResponses(reflections)})
 }
 
 // ─── Parent: manually trigger a daily reflection for a child ─────────────────
@@ -250,7 +313,7 @@ func (server *Server) triggerReflectionForChild(ctx *gin.Context) {
 		return
 	}
 
-	ctx.JSON(http.StatusOK, reflection)
+	ctx.JSON(http.StatusOK, toReflectionAPIResponse(*reflection))
 }
 
 // ─── Child: GET /v1/child/reflections/daily ──────────────────────────────────

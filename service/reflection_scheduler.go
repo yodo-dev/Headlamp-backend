@@ -54,8 +54,12 @@ func (s *ReflectionScheduler) Stop() {
 func (s *ReflectionScheduler) runDailyReflections() {
 	ctx := context.Background()
 
+	if err := s.reflectionService.RunPrivacyMaintenance(ctx); err != nil {
+		log.Error().Err(err).Msg("scheduler: reflection privacy maintenance failed")
+	}
+
 	if s.testMode {
-		// TEST MODE: fetch ALL eligible children (age 13+) regardless of whether
+		// TEST MODE: fetch ALL eligible children regardless of whether
 		// they already have a reflection today, and force-generate a new one.
 		children, err := s.store.GetAllEligibleChildrenForReflection(ctx)
 		if err != nil {

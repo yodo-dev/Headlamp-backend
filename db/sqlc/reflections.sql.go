@@ -144,8 +144,7 @@ func (q *Queries) CreateTimedSessionReflection(ctx context.Context, arg CreateTi
 const getChildrenNeedingDailyReflection = `-- name: GetChildrenNeedingDailyReflection :many
 SELECT c.id AS child_id, c.first_name, c.age
 FROM children c
-WHERE c.age >= 13
-  AND NOT EXISTS (
+WHERE NOT EXISTS (
     SELECT 1 FROM reflections r
     WHERE r.child_id = c.id
       AND r.trigger_type = 'daily_scheduled'
@@ -182,7 +181,6 @@ func (q *Queries) GetChildrenNeedingDailyReflection(ctx context.Context) ([]GetC
 const getAllEligibleChildrenForReflection = `-- name: GetAllEligibleChildrenForReflection :many
 SELECT c.id AS child_id, c.first_name, c.age
 FROM children c
-WHERE c.age >= 13
 `
 
 func (q *Queries) GetAllEligibleChildrenForReflection(ctx context.Context) ([]GetChildrenNeedingDailyReflectionRow, error) {
@@ -309,6 +307,7 @@ FROM reflections
 WHERE child_id = $1
   AND trigger_type = 'daily_scheduled'
   AND responded_at IS NOT NULL
+	AND response_text LIKE 'summary:%'
 ORDER BY delivered_at DESC
 LIMIT 10
 `
@@ -380,9 +379,9 @@ LIMIT $6 OFFSET $7
 type GetReflectionHistoryParams struct {
 	ChildID string                 `json:"child_id"`
 	Column2 *ReflectionTriggerType `json:"column_2"`
-	Column3 bool                   `json:"column_3"`
-	Column4 time.Time              `json:"column_4"`
-	Column5 time.Time              `json:"column_5"`
+	Column3 pgtype.Bool            `json:"column_3"`
+	Column4 pgtype.Timestamptz     `json:"column_4"`
+	Column5 pgtype.Timestamptz     `json:"column_5"`
 	Limit   int32                  `json:"limit"`
 	Offset  int32                  `json:"offset"`
 }
@@ -446,9 +445,9 @@ WHERE child_id = $1
 `
 
 type GetReflectionStatsParams struct {
-	ChildID string    `json:"child_id"`
-	Column2 time.Time `json:"column_2"`
-	Column3 time.Time `json:"column_3"`
+	ChildID string             `json:"child_id"`
+	Column2 pgtype.Timestamptz `json:"column_2"`
+	Column3 pgtype.Timestamptz `json:"column_3"`
 }
 
 type GetReflectionStatsRow struct {

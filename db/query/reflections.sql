@@ -105,8 +105,7 @@ LIMIT $2;
 -- name: GetChildrenNeedingDailyReflection :many
 SELECT c.id AS child_id, c.first_name, c.age
 FROM children c
-WHERE c.age >= 13
-  AND NOT EXISTS (
+WHERE NOT EXISTS (
     SELECT 1 FROM reflections r
     WHERE r.child_id = c.id
       AND r.trigger_type = 'daily_scheduled'
@@ -114,11 +113,10 @@ WHERE c.age >= 13
   );
 
 -- name: GetAllEligibleChildrenForReflection :many
--- Returns all children aged 13+ regardless of whether they already have a
+-- Returns all children regardless of whether they already have a
 -- reflection today. Used in test mode to bypass daily idempotency.
 SELECT c.id AS child_id, c.first_name, c.age
-FROM children c
-WHERE c.age >= 13;
+FROM children c;
 
 -- name: GetRecentDailyReflectionsWithResponses :many
 -- Returns the last 10 daily reflections that the child responded to,
@@ -128,5 +126,6 @@ FROM reflections
 WHERE child_id = $1
   AND trigger_type = 'daily_scheduled'
   AND responded_at IS NOT NULL
+  AND response_text LIKE 'summary:%'
 ORDER BY delivered_at DESC
 LIMIT 10;

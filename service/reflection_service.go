@@ -4,6 +4,8 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
+	"strings"
 	"time"
 
 	db "github.com/The-You-School-HeadLamp/headlamp_backend/db/sqlc"
@@ -19,10 +21,52 @@ import (
 type ReflectionService struct {
 	store     db.Store
 	gptClient gpt.GptClient
+	storeRaw  bool
+	retention int
 }
 
-func NewReflectionService(store db.Store, gptClient gpt.GptClient) *ReflectionService {
-	return &ReflectionService{store: store, gptClient: gptClient}
+func NewReflectionService(store db.Store, gptClient gpt.GptClient, storeRaw bool, retentionDays int) *ReflectionService {
+	if retentionDays <= 0 {
+		retentionDays = 1
+	}
+
+	return &ReflectionService{store: store, gptClient: gptClient, storeRaw: storeRaw, retention: retentionDays}
+}
+
+// RunPrivacyMaintenance redacts legacy content and purges expired reflection
+// payloads when raw storage mode is disabled.
+func (s *ReflectionService) RunPrivacyMaintenance(ctx context.Context) error {
+	if s.storeRaw {
+		return nil
+	}
+
+	sqlStore, ok := s.store.(*db.SQLStore)
+	if !ok {
+		return nil
+	}
+
+	textRedacted, mediaRedacted, err := sqlStore.RedactLegacyReflectionResponses(ctx)
+	if err != nil {
+		return err
+	}
+
+	cutoff := time.Now().UTC().AddDate(0, 0, -s.retention)
+	textPurged, mediaPurged, err := sqlStore.PurgeReflectionRawContent(ctx, cutoff)
+	if err != nil {
+		return err
+	}
+
+	if textRedacted > 0 || mediaRedacted > 0 || textPurged > 0 || mediaPurged > 0 {
+		log.Info().
+			Int64("text_redacted", textRedacted).
+			Int64("media_redacted", mediaRedacted).
+			Int64("text_purged", textPurged).
+			Int64("media_purged", mediaPurged).
+			Int("retention_days", s.retention).
+			Msg("reflection privacy maintenance applied")
+	}
+
+	return nil
 }
 
 // GenerateDailyReflection generates (or returns the existing) daily scheduled
@@ -279,9 +323,14 @@ func (s *ReflectionService) GeneratePostSessionReflection(ctx context.Context, c
 
 // RespondToReflection stores a text response to a reflection and auto-acknowledges it.
 func (s *ReflectionService) RespondToReflection(ctx context.Context, reflectionID uuid.UUID, responseText string, responseType db.ReflectionResponseType) (*db.Reflection, error) {
+	storedText := responseText
+	if !s.storeRaw {
+		storedText = summarizeReflectionText(responseText, responseType)
+	}
+
 	reflection, err := s.store.UpdateReflectionTextResponse(ctx, db.UpdateReflectionTextResponseParams{
 		ID:           reflectionID,
-		ResponseText: pgtype.Text{String: responseText, Valid: true},
+		ResponseText: pgtype.Text{String: storedText, Valid: true},
 		ResponseType: db.NullReflectionResponseType{ReflectionResponseType: responseType, Valid: true},
 	})
 	if err != nil {
@@ -303,9 +352,14 @@ func (s *ReflectionService) RespondToReflection(ctx context.Context, reflectionI
 
 // RespondToReflectionWithMedia stores a media URL response to a reflection and auto-acknowledges it.
 func (s *ReflectionService) RespondToReflectionWithMedia(ctx context.Context, reflectionID uuid.UUID, mediaURL string, responseType db.ReflectionResponseType) (*db.Reflection, error) {
+	storedMediaURL := mediaURL
+	if !s.storeRaw {
+		storedMediaURL = "redacted_media_response"
+	}
+
 	reflection, err := s.store.UpdateReflectionMediaResponse(ctx, db.UpdateReflectionMediaResponseParams{
 		ID:               reflectionID,
-		ResponseMediaUrl: pgtype.Text{String: mediaURL, Valid: true},
+		ResponseMediaUrl: pgtype.Text{String: storedMediaURL, Valid: true},
 		ResponseType:     db.NullReflectionResponseType{ReflectionResponseType: responseType, Valid: true},
 	})
 	if err != nil {
@@ -350,11 +404,11 @@ func (s *ReflectionService) GetPendingReflections(ctx context.Context, childID s
 func (s *ReflectionService) GetReflectionHistory(ctx context.Context, childID string, limit, offset int32) ([]db.Reflection, error) {
 	return s.store.GetReflectionHistory(ctx, db.GetReflectionHistoryParams{
 		ChildID: childID,
-		// Column2-5 are nullable filter params — pass nil/zero to match all
+		// Column2-5 are nullable filter params — pass nil/zero/invalid to match all
 		Column2: nil,
-		Column3: false,
-		Column4: time.Time{},
-		Column5: time.Time{},
+		Column3: pgtype.Bool{Valid: false},        // NULL → no filter on responded status
+		Column4: pgtype.Timestamptz{Valid: false}, // NULL → no lower bound
+		Column5: pgtype.Timestamptz{Valid: false}, // NULL → no upper bound
 		Limit:   limit,
 		Offset:  offset,
 	})
@@ -364,8 +418,8 @@ func (s *ReflectionService) GetReflectionHistory(ctx context.Context, childID st
 func (s *ReflectionService) GetReflectionStats(ctx context.Context, childID string) (db.GetReflectionStatsRow, error) {
 	return s.store.GetReflectionStats(ctx, db.GetReflectionStatsParams{
 		ChildID: childID,
-		Column2: time.Time{},
-		Column3: time.Time{},
+		Column2: pgtype.Timestamptz{Valid: false}, // NULL → no lower bound
+		Column3: pgtype.Timestamptz{Valid: false}, // NULL → no upper bound
 	})
 }
 
@@ -393,7 +447,7 @@ func (s *ReflectionService) fetchRecentDailyHistory(ctx context.Context, childID
 		var resp gpt.DailyReflectionResponse
 		_ = json.Unmarshal(row.PromptContent, &resp)
 		responseText := ""
-		if row.ResponseText.Valid {
+		if row.ResponseText.Valid && strings.HasPrefix(row.ResponseText.String, "summary:") {
 			responseText = row.ResponseText.String
 		}
 		entries = append(entries, gpt.PastReflectionEntry{
@@ -526,4 +580,35 @@ func getAppName(socialMediaID int64) string {
 		return name
 	}
 	return "social media"
+}
+
+func summarizeReflectionText(responseText string, responseType db.ReflectionResponseType) string {
+	clean := strings.TrimSpace(responseText)
+	if clean == "" {
+		return fmt.Sprintf("summary: type=%s words=0 tone=neutral", responseType)
+	}
+
+	words := strings.Fields(clean)
+	tone := "neutral"
+
+	lower := strings.ToLower(clean)
+	positiveHints := []string{"good", "great", "happy", "better", "calm", "proud", "excited", "grateful"}
+	negativeHints := []string{"bad", "sad", "angry", "upset", "stressed", "anxious", "worried", "frustrated"}
+
+	for _, hint := range positiveHints {
+		if strings.Contains(lower, hint) {
+			tone = "positive"
+			break
+		}
+	}
+	if tone == "neutral" {
+		for _, hint := range negativeHints {
+			if strings.Contains(lower, hint) {
+				tone = "negative"
+				break
+			}
+		}
+	}
+
+	return fmt.Sprintf("summary: type=%s words=%d tone=%s", responseType, len(words), tone)
 }

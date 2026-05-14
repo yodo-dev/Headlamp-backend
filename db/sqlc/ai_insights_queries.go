@@ -313,6 +313,7 @@ FROM reflections
 WHERE child_id = $1
   AND delivered_at >= $2
   AND response_text IS NOT NULL
+	AND response_text LIKE 'summary:%'
 ORDER BY delivered_at DESC
 LIMIT 10
 `

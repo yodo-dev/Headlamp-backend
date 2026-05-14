@@ -52,6 +52,12 @@ type Config struct {
 	// Reflection scheduler (standard 5-field cron expression)
 	ReflectionCronSchedule string `mapstructure:"REFLECTION_CRON_SCHEDULE"`
 	ReflectionTestMode     bool   `mapstructure:"REFLECTION_TEST_MODE"` // bypass idempotency for testing
+	// ReflectionStoreRawResponses controls whether child raw reflection content is persisted.
+	// Set to false to persist only non-identifying summaries/placeholders.
+	ReflectionStoreRawResponses bool `mapstructure:"REFLECTION_STORE_RAW_RESPONSES"`
+	// ReflectionRawRetentionDays controls how long legacy/raw reflection artifacts
+	// can remain before they are purged by privacy maintenance.
+	ReflectionRawRetentionDays int `mapstructure:"REFLECTION_RAW_RETENTION_DAYS"`
 
 	// Customer.io
 	CustomerIOSiteID        string `mapstructure:"CUSTOMERIO_SITE_ID"`
@@ -87,6 +93,8 @@ func LoadConfig(path string) (config Config, err error) {
 	viper.SetConfigType("env")
 
 	viper.AutomaticEnv()
+	viper.SetDefault("REFLECTION_STORE_RAW_RESPONSES", false)
+	viper.SetDefault("REFLECTION_RAW_RETENTION_DAYS", 1)
 
 	if err = viper.ReadInConfig(); err != nil {
 		if _, ok := err.(viper.ConfigFileNotFoundError); !ok {
@@ -132,6 +140,8 @@ func LoadConfig(path string) (config Config, err error) {
 	viper.BindEnv("FIREBASE_SERVICE_ACCOUNT_JSON")
 	viper.BindEnv("REFLECTION_CRON_SCHEDULE")
 	viper.BindEnv("REFLECTION_TEST_MODE")
+	viper.BindEnv("REFLECTION_STORE_RAW_RESPONSES")
+	viper.BindEnv("REFLECTION_RAW_RETENTION_DAYS")
 	viper.BindEnv("CUSTOMERIO_SITE_ID")
 	viper.BindEnv("CUSTOMERIO_API_KEY")
 	viper.BindEnv("CUSTOMERIO_REGION")

@@ -1,3 +1,5 @@
+from pathlib import Path
+
 import requests
 
 API_URL = "http://24.199.123.7:1337/api"
@@ -24,15 +26,76 @@ def update_entry(endpoint, entry_id, data):
     print(res.text)
     return res.json()["data"]["documentId"]
 
+
+def upload_media(file_path, upload_path):
+    path = Path(file_path)
+    with path.open("rb") as file_obj:
+        res = requests.post(
+            f"{API_URL}/upload",
+            headers={"Authorization": f"Bearer {API_TOKEN}"},
+            files={"files": (path.name, file_obj)},
+            data={"path": upload_path},
+        )
+
+    print(res.text)
+    res.raise_for_status()
+    payload = res.json()
+
+    if isinstance(payload, list) and payload:
+        return payload[0]["id"]
+
+    if isinstance(payload, dict):
+        data = payload.get("data")
+        if isinstance(data, list) and data:
+            return data[0]["id"]
+        if isinstance(data, dict) and "id" in data:
+            return data["id"]
+
+    raise RuntimeError("Unexpected upload response from Strapi")
+
+
+def attach_module_video(module_id, module, upload_path="app/weekly_module_videos"):
+    video_ref = module.get("video")
+    video_file = module.get("video_file")
+    video_asset_id = module.get("video_asset_id")
+
+    if isinstance(video_ref, dict):
+        video_file = video_ref.get("file_path") or video_ref.get("path") or video_file
+        video_asset_id = video_ref.get("asset_id") or video_ref.get("id") or video_asset_id
+    elif isinstance(video_ref, (int, str)):
+        video_asset_id = video_ref
+
+    if video_file:
+        video_asset_id = upload_media(video_file, upload_path)
+
+    if video_asset_id is not None:
+        update_entry("course-modules", module_id, {"video": video_asset_id})
+
+
+def resolve_record_id(record, preferred_keys):
+    if not isinstance(record, dict):
+        return None
+
+    for key in preferred_keys:
+        value = record.get(key)
+        if value:
+            return value
+
+    return None
+
 # -------- SEEDING -------- #
 def seed_weekly_modules(modules):
     for idx, module in enumerate(modules, start=1):
         print(f"Creating weekly module: {module['title']}")
-        module_id = create_entry("course-modules", {
-            "title": module["title"],
-            "description": module["description"],
-            "type": "weekly",
-        })
+        module_id = resolve_record_id(module, ["document_id", "module_document_id", "id"])
+        if module_id is None:
+            module_id = create_entry("course-modules", {
+                "title": module["title"],
+                "description": module["description"],
+                "type": "weekly",
+            })
+
+        attach_module_video(module_id, module)
 
         quiz = module["quiz"]
         print(f"  Creating quiz: {quiz['title']}")
