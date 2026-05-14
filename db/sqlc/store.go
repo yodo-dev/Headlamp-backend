@@ -76,6 +76,8 @@ type Store interface {
 	// ── Static public content ────────────────────────────────────────────────
 	UpsertPrivacyPolicyDocument(ctx context.Context, arg UpsertPrivacyPolicyDocumentParams) (PrivacyPolicyDocument, error)
 	GetPrivacyPolicyDocumentByKey(ctx context.Context, documentKey string) (PrivacyPolicyDocument, error)
+	UpsertParentResourceDocument(ctx context.Context, arg UpsertParentResourceDocumentParams) (ParentResourceDocument, error)
+	GetParentResourceDocumentByKey(ctx context.Context, documentKey string) (ParentResourceDocument, error)
 	UpsertContentTopicDocument(ctx context.Context, arg UpsertContentTopicDocumentParams) (ContentTopicDocument, error)
 	ListContentTopicDocumentsByCategory(ctx context.Context, category string) ([]ContentTopicDocument, error)
 	GetContentTopicDocumentByCategoryAndTopicKey(ctx context.Context, category string, topicKey string) (ContentTopicDocument, error)

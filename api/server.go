@@ -271,6 +271,7 @@ func (server *Server) setupRouter() {
 		parentRoutes.PATCH("/", server.updateParentProfile)
 		parentRoutes.POST("/change-password", server.changePassword)
 		parentRoutes.GET("/", server.getParentProfile)
+		parentRoutes.GET("/resource", server.getParentResource)
 		parentRoutes.GET("/child/:id/social-media", server.getParentSocialMediaSettings)
 		parentRoutes.POST("/child/:id/social-media", server.setSocialMediaAccess)
 		parentRoutes.GET("/child/:id/boosters", server.getBoostersForChildByParent)
