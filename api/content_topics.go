@@ -7,6 +7,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/The-You-School-HeadLamp/headlamp_backend/strapi"
 	"github.com/gin-gonic/gin"
 	"github.com/jackc/pgx/v5"
 )
@@ -17,6 +18,8 @@ const (
 )
 
 var contentNumberedHeadingPattern = regexp.MustCompile(`^\s*(\d+)\.\s+(.+?)\s*$`)
+var contentStepHeadingPattern = regexp.MustCompile(`^\s*Step\s+(\d+)\s*:\s*(.+?)\s*$`)
+var genericGuideLabelPattern = regexp.MustCompile(`^guide[\s_-]*\d*$`)
 
 type contentSection struct {
 	Number     int      `json:"number"`
@@ -51,6 +54,99 @@ type contentTopicDetailResponse struct {
 	Preamble  contentPreamble  `json:"preamble"`
 	Sections  []contentSection `json:"sections"`
 	UpdatedAt string           `json:"updated_at"`
+}
+
+type guideTopicSummary struct {
+	TopicKey    string `json:"topic_key"`
+	Title       string `json:"title"`
+	Description string `json:"description"`
+	PDFURL      string `json:"pdf_url"`
+}
+
+type guideTopicListResponse struct {
+	Category string              `json:"category"`
+	Items    []guideTopicSummary `json:"items"`
+}
+
+type guideTopicDetailResponse struct {
+	Category    string `json:"category"`
+	TopicKey    string `json:"topic_key"`
+	Title       string `json:"title"`
+	Description string `json:"description"`
+	PDFURL      string `json:"pdf_url"`
+}
+
+func guideTopicKeyFromTitle(title string) string {
+	normalized := strings.ToLower(strings.TrimSpace(title))
+
+	// Backward-compatible mappings for existing mobile topic keys.
+	if strings.Contains(normalized, "everyone else has a phone") {
+		return "setting-limits-without-starting-a-war"
+	}
+	if strings.Contains(normalized, "model healthy device use") {
+		return "what-dopamine-does-to-a-teens-brain"
+	}
+	if strings.Contains(normalized, "readiness assessment") && strings.Contains(normalized, "not yet") {
+		return "when-the-readiness-assessment-says-not-yet"
+	}
+
+	slug := strings.ToLower(strings.TrimSpace(title))
+	slug = regexp.MustCompile(`[^a-z0-9]+`).ReplaceAllString(slug, "-")
+	slug = strings.Trim(slug, "-")
+	if slug == "" {
+		return "guide"
+	}
+	return slug
+}
+
+func normalizeGuideDisplayTitle(guide strapi.Guide) string {
+	title := strings.TrimSpace(guide.Title)
+	description := strings.TrimSpace(guide.Description)
+
+	// Strapi "text" can be generic (Guide_1, Guide_2). Prefer rich description as display title.
+	if title == "" || genericGuideLabelPattern.MatchString(strings.ToLower(title)) {
+		if description != "" {
+			return description
+		}
+	}
+
+	if title != "" {
+		return title
+	}
+
+	return description
+}
+
+func matchesGuideTopicKey(requestedKey string, guide strapi.Guide) bool {
+	requested := strings.TrimSpace(strings.ToLower(requestedKey))
+	if requested == "" {
+		return false
+	}
+
+	titleCandidates := []string{
+		normalizeGuideDisplayTitle(guide),
+		strings.TrimSpace(guide.Title),
+		strings.TrimSpace(guide.Description),
+	}
+
+	for _, candidate := range titleCandidates {
+		if candidate == "" {
+			continue
+		}
+
+		canonical := guideTopicKeyFromTitle(candidate)
+		if requested == canonical {
+			return true
+		}
+
+		// Keep accepting both legacy and title-derived keys.
+		titleDerived := strings.ToLower(strings.Trim(regexp.MustCompile(`[^a-z0-9]+`).ReplaceAllString(strings.ToLower(strings.TrimSpace(candidate)), "-"), "-"))
+		if requested == titleDerived {
+			return true
+		}
+	}
+
+	return false
 }
 
 func flushContentParagraph(lines []string, out *[]string) {
@@ -140,6 +236,94 @@ func parseStructuredContentSections(content string) ([]string, []contentSection)
 	return preambleParagraphs, sections
 }
 
+func isConversationHeadingLine(line string) bool {
+	trimmed := strings.TrimSpace(line)
+	if trimmed == "" {
+		return false
+	}
+
+	if contentStepHeadingPattern.MatchString(trimmed) {
+		return true
+	}
+
+	lower := strings.ToLower(trimmed)
+	if strings.HasPrefix(lower, "final thought") {
+		return true
+	}
+
+	// Conversation headings are usually short standalone lines without ending punctuation.
+	if strings.HasSuffix(trimmed, ".") || strings.HasSuffix(trimmed, "?") || strings.HasSuffix(trimmed, "!") || strings.HasSuffix(trimmed, ":") {
+		return false
+	}
+
+	words := strings.Fields(trimmed)
+	if len(words) == 0 || len(words) > 8 {
+		return false
+	}
+
+	if strings.HasPrefix(lower, "hl parent conversation") {
+		return false
+	}
+
+	return true
+}
+
+func parseConversationContentSections(content string) ([]string, []contentSection) {
+	lines := strings.Split(content, "\n")
+	preambleParagraphs := make([]string, 0)
+	sections := make([]contentSection, 0)
+
+	var currentSection *contentSection
+	nextSectionNumber := 1
+
+	flushCurrentSection := func() {
+		if currentSection == nil {
+			return
+		}
+		sections = append(sections, *currentSection)
+		currentSection = nil
+	}
+
+	for _, line := range lines {
+		trimmed := strings.TrimSpace(line)
+		if trimmed == "" {
+			continue
+		}
+
+		if isConversationHeadingLine(trimmed) {
+			flushCurrentSection()
+
+			heading := trimmed
+			number := nextSectionNumber
+
+			if matches := contentStepHeadingPattern.FindStringSubmatch(trimmed); len(matches) == 3 {
+				if parsed, err := strconv.Atoi(matches[1]); err == nil {
+					number = parsed
+				}
+				heading = strings.TrimSpace(matches[2])
+			}
+
+			currentSection = &contentSection{
+				Number:     number,
+				Heading:    heading,
+				Paragraphs: make([]string, 0),
+			}
+			nextSectionNumber = number + 1
+			continue
+		}
+
+		if currentSection == nil {
+			preambleParagraphs = append(preambleParagraphs, trimmed)
+			continue
+		}
+
+		currentSection.Paragraphs = append(currentSection.Paragraphs, trimmed)
+	}
+
+	flushCurrentSection()
+	return preambleParagraphs, sections
+}
+
 func normalizeContentCategory(raw string) (string, bool) {
 	normalized := strings.TrimSpace(strings.ToLower(raw))
 	switch normalized {
@@ -154,6 +338,31 @@ func (server *Server) listContentTopics(ctx *gin.Context) {
 	category, ok := normalizeContentCategory(ctx.Param("category"))
 	if !ok {
 		ctx.JSON(http.StatusBadRequest, gin.H{"error": "invalid category"})
+		return
+	}
+
+	if category == contentCategoryGuides {
+		guides, err := server.strapiClient.FetchGuides(ctx.Request.Context())
+		if err != nil {
+			ctx.JSON(http.StatusBadGateway, gin.H{"error": "failed to fetch guides"})
+			return
+		}
+
+		items := make([]guideTopicSummary, 0, len(guides))
+		for _, guide := range guides {
+			displayTitle := normalizeGuideDisplayTitle(guide)
+			items = append(items, guideTopicSummary{
+				TopicKey:    guideTopicKeyFromTitle(displayTitle),
+				Title:       displayTitle,
+				Description: guide.Description,
+				PDFURL:      guide.PDFUrl,
+			})
+		}
+
+		ctx.JSON(http.StatusOK, guideTopicListResponse{
+			Category: category,
+			Items:    items,
+		})
 		return
 	}
 
@@ -194,6 +403,33 @@ func (server *Server) getContentTopicDocument(ctx *gin.Context) {
 		return
 	}
 
+	if category == contentCategoryGuides {
+		guides, err := server.strapiClient.FetchGuides(ctx.Request.Context())
+		if err != nil {
+			ctx.JSON(http.StatusBadGateway, gin.H{"error": "failed to fetch guides"})
+			return
+		}
+
+		for _, guide := range guides {
+			displayTitle := normalizeGuideDisplayTitle(guide)
+			if !matchesGuideTopicKey(topicKey, guide) {
+				continue
+			}
+
+			ctx.JSON(http.StatusOK, guideTopicDetailResponse{
+				Category:    category,
+				TopicKey:    guideTopicKeyFromTitle(displayTitle),
+				Title:       displayTitle,
+				Description: guide.Description,
+				PDFURL:      guide.PDFUrl,
+			})
+			return
+		}
+
+		ctx.JSON(http.StatusNotFound, gin.H{"error": "content topic not found"})
+		return
+	}
+
 	doc, err := server.store.GetContentTopicDocumentByCategoryAndTopicKey(ctx.Request.Context(), category, topicKey)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
@@ -205,7 +441,13 @@ func (server *Server) getContentTopicDocument(ctx *gin.Context) {
 		return
 	}
 
-	preambleParagraphs, sections := parseStructuredContentSections(doc.Content)
+	var preambleParagraphs []string
+	var sections []contentSection
+	if category == contentCategoryConversations {
+		preambleParagraphs, sections = parseConversationContentSections(doc.Content)
+	} else {
+		preambleParagraphs, sections = parseStructuredContentSections(doc.Content)
+	}
 
 	ctx.JSON(http.StatusOK, contentTopicDetailResponse{
 		Category: category,

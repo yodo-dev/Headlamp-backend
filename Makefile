@@ -118,13 +118,13 @@ seed-social-course:
 		--reuse-course-if-exists
 
 seed-privacy-policy:
-	go run ./db/seeders/privacy_policy_seeder.go -file privacy-policy/privacy-policy-content.txt
+	go run ./db/seeders -seeder privacy-policy -file content-topics/privacy-policy/privacy-policy-content.txt
 
 seed-parent-resource:
-	go run ./db/seeders/parent_resource_seeder -file headlamp-parent-resource/HL-Parent-Resource-Critical-Thinking-Article.txt
+	go run ./db/seeders -seeder parent-resource -file content-topics/headlamp-parent-resource/HL-Parent-Resource-Critical-Thinking-Article.txt
 
 seed-content-topics:
-	go run ./db/seeders/content_topics_seeder
+	go run ./db/seeders -seeder content-topics
 
 zookeeper:
 	docker run --name zookeeper --network assignme \

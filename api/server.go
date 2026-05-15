@@ -54,6 +54,9 @@ type Server struct {
 	customerIOClient       crm.CustomerIOClient
 	customerIOSyncWorker   *service.CustomerIOSyncWorker
 	sessionHub             *SessionHub
+
+	// Strapi
+	strapiClient           strapi.Client
 }
 
 // NewServer creates a new HTTP server and sets up routing.
@@ -120,7 +123,8 @@ func NewServer(config util.Config, store db.Store, tokenMaker token.Maker, gptCl
 		analyticsService:       analyticsService,
 		customerIOClient:       customerIOClient,
 		customerIOSyncWorker:   customerIOSyncWorker,
-		sessionHub:             NewSessionHub(),
+			   sessionHub:             NewSessionHub(),
+			   strapiClient:           strapiClient,
 	}
 
 	SetupValidator()
@@ -152,7 +156,10 @@ func NewServer(config util.Config, store db.Store, tokenMaker token.Maker, gptCl
 
 func (server *Server) setupRouter() {
 	router := gin.Default()
+	server.router = router
 	router.MaxMultipartMemory = 15 << 20 // 15 MB
+	// Guides API (public)
+	server.router.GET("/v1/guides", server.getGuidesHandler)
 
 	// Auth routes
 	v1 := router.Group("/v1")

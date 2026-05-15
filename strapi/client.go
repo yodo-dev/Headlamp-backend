@@ -12,7 +12,8 @@ import (
 )
 
 type Client interface {
-	FetchMobileUIConfig(ctx context.Context, locale string) ([]Attributes, time.Time, error)
+       FetchMobileUIConfig(ctx context.Context, locale string) ([]Attributes, time.Time, error)
+       FetchGuides(ctx context.Context) ([]Guide, error)
 }
 
 type client struct {
