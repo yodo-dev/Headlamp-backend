@@ -431,7 +431,7 @@ func (server *Server) getMyCourse(ctx *gin.Context) {
 		server.renderCourseForChild(ctx, child.ID, req.CourseID)
 		return
 	}
-	if err != nil && !errors.Is(err, pgx.ErrNoRows) {
+	if !errors.Is(err, pgx.ErrNoRows) {
 		ctx.JSON(http.StatusInternalServerError, errorResponse(err))
 		return
 	}
