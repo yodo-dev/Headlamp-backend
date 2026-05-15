@@ -8,6 +8,7 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"path"
 	"strings"
 	"time"
 
@@ -88,13 +89,14 @@ func (server *Server) fetchParentResource(ctx context.Context) (*parentResourceR
 		Sections: sections,
 	}
 
-	mediaResource, err := server.fetchParentResourceMedia(ctx)
+	mediaResource, err := server.fetchParentResourceMedia(ctx, resource.Title)
 	if err != nil {
 		return nil, err
 	}
 	if mediaResource != nil {
 		resource.ID = mediaResource.ID
 		resource.Video = mediaResource.Video
+		resource.Document = mediaResource.Document
 		if resource.Title == "" {
 			resource.Title = mediaResource.Title
 		}
@@ -198,7 +200,7 @@ func flushParentResourceParagraph(lines []string, out *[]string) {
 	*out = append(*out, paragraph)
 }
 
-func (server *Server) fetchParentResourceMedia(ctx context.Context) (*strapiMediaData, error) {
+func (server *Server) fetchParentResourceMedia(ctx context.Context, preferredTitle string) (*strapiMediaData, error) {
 	base := strings.TrimRight(server.config.ExternalContentBaseURL, "/")
 	if base == "" {
 		return nil, fmt.Errorf("external content base URL not configured")
@@ -212,7 +214,7 @@ func (server *Server) fetchParentResourceMedia(ctx context.Context) (*strapiMedi
 	q := endpoint.Query()
 	q.Set("publicationState", "live")
 	q.Set("sort[0]", "createdAt:desc")
-	q.Set("pagination[pageSize]", "1")
+	q.Set("pagination[pageSize]", "25")
 	q.Set("populate", "*")
 	endpoint.RawQuery = q.Encode()
 
@@ -245,7 +247,7 @@ func (server *Server) fetchParentResourceMedia(ctx context.Context) (*strapiMedi
 		return nil, fmt.Errorf("parse parent resource response: %w", err)
 	}
 
-	first := pickFirstStrapiItem(envelope.Data)
+	first := pickBestStrapiParentResourceItem(envelope.Data, preferredTitle)
 	if first == nil {
 		return nil, nil
 	}
@@ -262,12 +264,20 @@ func (server *Server) fetchParentResourceMedia(ctx context.Context) (*strapiMedi
 
 	if media := extractMedia(first["video"]); media != nil {
 		media.URL = server.absoluteURL(media.URL)
-		resource.Video = media
+		if isLikelyVideoMedia(media) {
+			resource.Video = media
+		} else if resource.Document == nil {
+			resource.Document = media
+		}
 	}
 	if resource.Video == nil {
 		if media := extractMedia(first["media"]); media != nil {
 			media.URL = server.absoluteURL(media.URL)
-			resource.Video = media
+			if isLikelyVideoMedia(media) {
+				resource.Video = media
+			} else if resource.Document == nil {
+				resource.Document = media
+			}
 		}
 	}
 
@@ -283,7 +293,110 @@ func (server *Server) fetchParentResourceMedia(ctx context.Context) (*strapiMedi
 		}
 	}
 
+	if resource.Video == nil && resource.Document != nil && isLikelyVideoMedia(resource.Document) {
+		resource.Video = resource.Document
+		resource.Document = nil
+	}
+
 	return resource, nil
+}
+
+func pickBestStrapiParentResourceItem(data any, preferredTitle string) map[string]any {
+	items := pickStrapiItems(data)
+	if len(items) == 0 {
+		return nil
+	}
+
+	if len(items) == 1 {
+		return items[0]
+	}
+
+	normalizedPreferred := normalizeParentResourceLabel(preferredTitle)
+
+	findBy := func(match func(map[string]any) bool) map[string]any {
+		for _, item := range items {
+			if match(item) {
+				return item
+			}
+		}
+		return nil
+	}
+
+	if normalizedPreferred != "" {
+		if item := findBy(func(item map[string]any) bool {
+			label := normalizeParentResourceLabel(parentResourceLabel(item))
+			media := extractMedia(item["media"])
+			return label == normalizedPreferred && isLikelyVideoMedia(media)
+		}); item != nil {
+			return item
+		}
+
+		if item := findBy(func(item map[string]any) bool {
+			label := normalizeParentResourceLabel(parentResourceLabel(item))
+			return label == normalizedPreferred
+		}); item != nil {
+			return item
+		}
+
+		if item := findBy(func(item map[string]any) bool {
+			label := normalizeParentResourceLabel(parentResourceLabel(item))
+			media := extractMedia(item["media"])
+			return strings.Contains(label, normalizedPreferred) && isLikelyVideoMedia(media)
+		}); item != nil {
+			return item
+		}
+
+		if item := findBy(func(item map[string]any) bool {
+			label := normalizeParentResourceLabel(parentResourceLabel(item))
+			return strings.Contains(label, normalizedPreferred)
+		}); item != nil {
+			return item
+		}
+	}
+
+	if item := findBy(func(item map[string]any) bool {
+		media := extractMedia(item["media"])
+		return isLikelyVideoMedia(media)
+	}); item != nil {
+		return item
+	}
+
+	return items[0]
+}
+
+func pickStrapiItems(data any) []map[string]any {
+	items := make([]map[string]any, 0)
+
+	switch v := data.(type) {
+	case []any:
+		for _, raw := range v {
+			if obj, ok := raw.(map[string]any); ok {
+				items = append(items, obj)
+			}
+		}
+	case map[string]any:
+		items = append(items, v)
+	}
+
+	return items
+}
+
+func parentResourceLabel(item map[string]any) string {
+	label := pickString(item, "text", "title", "name", "heading", "description")
+	if label != "" {
+		return label
+	}
+	return strings.TrimSpace(extractTextFromAny(item["text"]))
+}
+
+func normalizeParentResourceLabel(value string) string {
+	value = strings.ToLower(strings.TrimSpace(value))
+	if value == "" {
+		return ""
+	}
+	value = strings.ReplaceAll(value, "-", " ")
+	value = strings.Join(strings.Fields(value), " ")
+	return value
 }
 
 func pickFirstStrapiItem(data any) map[string]any {
@@ -376,4 +489,41 @@ func extractMedia(value any) *parentResourceMedia {
 	}
 
 	return nil
+}
+
+func isLikelyVideoMedia(media *parentResourceMedia) bool {
+	if media == nil {
+		return false
+	}
+
+	lowerMime := strings.ToLower(strings.TrimSpace(media.Mime))
+	if strings.HasPrefix(lowerMime, "video/") {
+		return true
+	}
+
+	lowerName := strings.ToLower(strings.TrimSpace(media.Name))
+	if hasVideoExtension(lowerName) {
+		return true
+	}
+
+	urlWithoutQuery := strings.TrimSpace(media.URL)
+	if idx := strings.Index(urlWithoutQuery, "?"); idx >= 0 {
+		urlWithoutQuery = urlWithoutQuery[:idx]
+	}
+	urlExt := strings.ToLower(path.Ext(urlWithoutQuery))
+	return hasVideoExtension(urlExt)
+}
+
+func hasVideoExtension(value string) bool {
+	if value == "" {
+		return false
+	}
+	lower := strings.ToLower(value)
+	return strings.HasSuffix(lower, ".mp4") ||
+		strings.HasSuffix(lower, ".mov") ||
+		strings.HasSuffix(lower, ".m4v") ||
+		strings.HasSuffix(lower, ".webm") ||
+		strings.HasSuffix(lower, ".avi") ||
+		strings.HasSuffix(lower, ".mkv") ||
+		strings.HasSuffix(lower, ".wmv")
 }
