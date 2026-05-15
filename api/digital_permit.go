@@ -518,7 +518,7 @@ func (server *Server) handleDigitalPermitTestWSV2(ctx *gin.Context) {
 	}
 
 	// Resolve mode based on query parameter and environment.
-	_, maxQuestions := server.resolveDigitalPermitTestMode(ctx, req.ChildID)
+	debugMode, maxQuestions := server.resolveDigitalPermitTestMode(ctx, req.ChildID)
 
 	conn, err := upgrader.Upgrade(ctx.Writer, ctx.Request, nil)
 	if err != nil {
@@ -658,6 +658,41 @@ func (server *Server) handleDigitalPermitTestWSV2(ctx *gin.Context) {
 		if questionsAnsweredOnResume < 0 {
 			questionsAnsweredOnResume = 0
 		}
+
+		var resumedScore float64
+		for _, interaction := range interactions {
+			if interaction.PointsAwarded.Valid {
+				resumedScore += interaction.PointsAwarded.Float64
+			}
+		}
+
+		if debugMode && resumedScore >= 10.0 {
+			_, updateErr := server.store.UpdateDigitalPermitTestStatus(ctx, db.UpdateDigitalPermitTestStatusParams{
+				ID:     testID,
+				Status: db.DigitalPermitTestStatus("completed"),
+			})
+			if updateErr != nil {
+				log.Error().Err(updateErr).Str("child_id", req.ChildID).Str("test_id", testID.String()).Msg("failed to finalize resumed debug digital permit test")
+				conn.WriteJSON(gin.H{"error": "failed to finalize resumed test"})
+				return
+			}
+
+			_, _ = server.store.UpdateChildOnboardingStep(ctx, db.UpdateChildOnboardingStepParams{
+				ChildID:      req.ChildID,
+				OnboardingID: "digital_permit_test",
+			})
+
+			completionText := fmt.Sprintf("Debug mode complete. Final Score: %.1f", resumedScore)
+			_ = conn.WriteJSON(gin.H{
+				"role":        "assistant",
+				"status":      "complete",
+				"text":        completionText,
+				"final_score": resumedScore,
+				"passed":      true,
+			})
+			return
+		}
+
 		if questionsAnsweredOnResume >= maxQuestions {
 			var totalScore float64
 			for _, interaction := range interactions {
@@ -893,6 +928,41 @@ func (server *Server) handleDigitalPermitTestWSV2(ctx *gin.Context) {
 			if interaction.PointsAwarded.Valid {
 				totalScore += interaction.PointsAwarded.Float64
 			}
+		}
+
+		// In debug mode, complete early once score reaches 10.
+		if debugMode && totalScore >= 10.0 {
+			_, err = server.store.UpdateDigitalPermitTestStatus(ctx, db.UpdateDigitalPermitTestStatusParams{
+				ID:     testID,
+				Status: "completed",
+			})
+			if err != nil {
+				conn.WriteJSON(gin.H{"error": "failed to update test status"})
+				break
+			}
+
+			_, err = server.store.UpdateChildOnboardingStep(ctx, db.UpdateChildOnboardingStepParams{
+				ChildID:      req.ChildID,
+				OnboardingID: "digital_permit_test",
+			})
+			if err != nil {
+				log.Error().Err(err).Str("child_id", req.ChildID).Msg("failed to update digital_permit_test onboarding step")
+			}
+
+			finalMessage := gin.H{
+				"role":        "assistant",
+				"status":      "complete",
+				"text":        fmt.Sprintf("Debug mode complete. Final Score: %.1f", totalScore),
+				"final_score": totalScore,
+				"passed":      true,
+			}
+			if err := conn.WriteJSON(finalMessage); err != nil {
+				break
+			}
+
+			go server.logActivityAndNotify(ctx, req.ChildID, "digital_permit_test_completed", testID.String(), "Digital Permit Test")
+			go server.triggerDPTUnlockInitialization(req.ChildID)
+			break
 		}
 
 		// Check if we've reached the max questions (deterministic check)

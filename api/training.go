@@ -1233,33 +1233,9 @@ func (server *Server) buildIntroReadinessStage(modules []flattenedTrainingModule
 
 	chatUnlocked := len(childModules) > 0 && childCompletedCount == len(childModules)
 	chatDone := stepStatusByKey["intro_readiness_chat_test"] == trainingStatusCompleted
-	chatStatus := trainingStatusLocked
-	chatLocked := true
-	if chatDone {
-		chatStatus = trainingStatusCompleted
-		chatLocked = false
-	} else if chatUnlocked {
-		chatStatus = trainingStatusAvailable
-		chatLocked = false
-	}
 
-	stage.Modules = append(stage.Modules, trainingModuleResponse{
-		ModuleKey: "intro_readiness_chat_test",
-		Title:     "Intro and Readiness Chat Test",
-		Order:     13,
-		Status:    chatStatus,
-		IsLocked:  chatLocked,
-		Steps: []trainingStepResponse{
-			{
-				StepKey:    "intro_readiness_chat_test",
-				StepType:   trainingStepTypeFinalTest,
-				Title:      "Take Chat Test",
-				Status:     chatStatus,
-				IsLocked:   chatLocked,
-				LockReason: conditionalLockReason(chatLocked, "Complete all Intro and Readiness modules first"),
-			},
-		},
-	})
+	// Keep the chat test as a stage-level milestone (via ThisWeeksStep/state),
+	// not a content module, so module totals match actual Strapi modules/videos.
 
 	stage.Progress = &trainingStageProgress{
 		ParentVideosWatched:          parentCompleteCount,

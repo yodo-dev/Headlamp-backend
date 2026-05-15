@@ -18,6 +18,7 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/gin-gonic/gin"
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/rs/zerolog/log"
 
@@ -410,6 +411,28 @@ func (server *Server) getMyCourse(ctx *gin.Context) {
 		CourseID string `uri:"course_id" binding:"required"`
 	}
 	if !bindAndValidateUri(ctx, &req) {
+		return
+	}
+
+	// Prefer unlock-table gating for social driver courses.
+	if err := server.ensureUnlockSystemSeeded(ctx.Request.Context(), child.ID); err != nil {
+		log.Warn().Err(err).Str("child_id", child.ID).Str("course_id", req.CourseID).Msg("getMyCourse: unlock seed failed; falling back to legacy access check")
+	}
+
+	courseUnlock, err := server.store.GetChildCourseUnlockByCourse(ctx.Request.Context(), db.GetChildCourseUnlockByCourseParams{
+		ChildID:  child.ID,
+		CourseID: req.CourseID,
+	})
+	if err == nil {
+		if courseUnlock.Status == db.CourseStatusLocked {
+			ctx.JSON(http.StatusForbidden, gin.H{"error": "course is locked until previous required modules are completed"})
+			return
+		}
+		server.renderCourseForChild(ctx, child.ID, req.CourseID)
+		return
+	}
+	if err != nil && !errors.Is(err, pgx.ErrNoRows) {
+		ctx.JSON(http.StatusInternalServerError, errorResponse(err))
 		return
 	}
 
